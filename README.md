@@ -5,7 +5,7 @@
 # OneNote Backup Exporter
 
 A Windows desktop application to export OneNote notebooks to portable formats.  
-Talks directly to OneNote Desktop via the COM API — no cloud services, no account required, no internet connection.
+Talks directly to OneNote Desktop via the COM AP.
 
 ![version](https://img.shields.io/badge/version-1.1.0-blueviolet?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D7?style=flat-square&logo=windows&logoColor=white)
