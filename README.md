@@ -20,7 +20,24 @@ Talks directly to OneNote Desktop via the COM AP.
 
 ## Download
 
-Go to [Releases](../../releases/latest) and download `OneNoteBackupExporter_Setup_1.0.0.exe`. Run the installer, done.
+Go to [Releases](../../releases/latest) and download the latest
+`OneNoteBackupExporter_Setup_<version>.exe`. Run the installer, done. A matching
+`.sha256` file is included so the download can be verified.
+
+## Automated builds and releases
+
+GitHub Actions builds a self-contained Windows x64 application and compiles the Inno Setup
+installer for every pull request and every push to `main`. The installer and its SHA-256
+checksum are available as workflow artifacts for 14 days.
+
+To publish a release:
+
+1. Update `<Version>` in `OneNoteExporter.csproj` and commit the change.
+2. Create and push a matching tag, for example `v1.2.0`.
+3. GitHub Actions builds the installer, creates the GitHub release with generated notes, and
+   uploads the installer plus checksum automatically.
+
+The tag and project versions must match; otherwise the release build fails without publishing.
 
 ## Requirements
 
