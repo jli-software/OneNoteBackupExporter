@@ -58,11 +58,11 @@ $IsssPaths = @(
 $Iscc = $IsssPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if (-not $Iscc) {
-    Write-Host "WARNUNG: ISCC.exe nicht gefunden – Installer wird übersprungen." -ForegroundColor Yellow
+    Write-Host "WARNUNG: ISCC.exe nicht gefunden - Installer wird übersprungen." -ForegroundColor Yellow
     Write-Host "  -> Inno Setup installieren: https://jrsoftware.org/isdl.php" -ForegroundColor Yellow
 }
 elseif (-not (Test-Path $IssFile)) {
-    Write-Host "WARNUNG: innosetup.iss nicht gefunden – Installer wird übersprungen." -ForegroundColor Yellow
+    Write-Host "WARNUNG: innosetup.iss nicht gefunden - Installer wird übersprungen." -ForegroundColor Yellow
 }
 else {
     Write-Host ">> Starte Inno Setup: $Iscc" -ForegroundColor Cyan
