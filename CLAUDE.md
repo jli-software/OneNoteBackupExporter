@@ -22,7 +22,7 @@ OneNote Desktop
 
 ```
 OneNoteExporterC#/
-├── OneNoteExporter.csproj   Target: net10.0-windows, UseWPF, PlatformTarget=x86
+├── OneNoteExporter.csproj   Target: net10.0-windows, UseWPF, PlatformTarget=x64
 ├── OneNoteExporter.sln
 ├── App.xaml                  Global styles (colors, buttons, inputs)
 ├── App.xaml.cs               Global exception handler
@@ -48,14 +48,14 @@ dotnet build
 # Run (debug)
 dotnet run
 
-# Publish self-contained x86
-dotnet publish -c Release -r win-x86 --self-contained true
+# Publish self-contained x64
+dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
 ## Critical Technical Details
 
 ### COM Compatibility
-- **`PlatformTarget=x86` is mandatory** – most OneNote Desktop installations are 32-bit. Changing to x64 or AnyCPU will cause "Class not registered" COM errors.
+- **`PlatformTarget=x64` is mandatory** – this build targets current 64-bit OneNote Desktop installations. Changing the platform can cause "Class not registered" COM errors.
 - **NuGet package:** `Interop.Microsoft.Office.Interop.OneNote` v1.1.0.2 (NOT `Microsoft.Office.Interop.OneNote`)
 - **Do NOT add `<UseWindowsForms>true</UseWindowsForms>`** – causes namespace conflict with the COM `Application` class
 

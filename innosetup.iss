@@ -1,9 +1,12 @@
 #define MyAppName      "OneNoteBackupExporter"
-#define MyAppVersion   "1.1.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.1.0"
+#endif
 #define MyAppPublisher "JLI Software"
-#define MyAppURL       "https://github.com/vikingjunior12/OneNoteBackupExporter"
+#define MyAppURL       "https://github.com/jli-software/OneNoteBackupExporter"
 #define MyAppExeName   "OneNoteExporter.exe"
-#define MyBuildDir     "C:\Users\JLi1\Nextcloud\C#_pwsh\OneNoteExporterC#\build"
+#define MyBuildDir     SourcePath + "build"
+#define MyOutputDir    SourcePath + "artifacts"
 
 [Setup]
 AppId={{BBAE42F6-2F7E-474E-9A2D-C771DB475E3F}
@@ -18,7 +21,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
-OutputDir=C:\Users\JLi1\Nextcloud\C#_pwsh\OneNoteExporterC#\
+OutputDir={#MyOutputDir}
 OutputBaseFilename=OneNoteBackupExporter_Setup_{#MyAppVersion}
 SolidCompression=yes
 WizardStyle=modern
@@ -30,7 +33,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; Gesamter Build-Ordner (self-contained, x86)
+; Self-contained x64 publish output
 Source: "{#MyBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

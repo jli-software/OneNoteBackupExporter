@@ -2,6 +2,7 @@
 bin/
 obj/
 build/
+artifacts/
 
 # Setup-EXE (wird als GitHub Release Asset hochgeladen)
 *.exe
