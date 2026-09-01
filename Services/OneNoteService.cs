@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Xml.Linq;
@@ -7,23 +6,19 @@ using OneNoteExporter.Models;
 
 namespace OneNoteExporter.Services;
 
+internal sealed record PendingExport(string FullPath, bool IsCloud);
+
 /// <summary>
-/// Wraps the OneNote COM API. Must be constructed and called on a background thread
-/// (via Task.Run) because COM calls and Thread.Sleep block.
-/// Dispose() must be called when the application closes.
+/// Synchronous OneNote COM API implementation owned by <see cref="OneNoteComWorker"/>.
+/// Construction, all calls and disposal must stay on that worker's STA thread.
 /// </summary>
-public class OneNoteService : IDisposable
+internal sealed class OneNoteService : IDisposable
 {
     private Application? _oneNote;
     private bool _disposed = false;
-    private bool _oneNoteWasRunning = false;
-    private bool _oneNoteClosedAttempted = false;
 
     public OneNoteService()
     {
-        var oneNoteProcesses = Process.GetProcessesByName("ONENOTE");
-        _oneNoteWasRunning = oneNoteProcesses.Length > 0;
-
         try
         {
             _oneNote = new Application();
@@ -87,173 +82,65 @@ public class OneNoteService : IDisposable
     }
 
     /// <summary>
-    /// Exports a single notebook. Blocks the calling thread until finished.
-    /// Call via Task.Run from the UI layer.
+    /// Starts a notebook export and returns as soon as OneNote accepted the
+    /// publish request. File completion is monitored outside the STA thread.
     /// </summary>
-    public ExportResult ExportNotebook(
+    public PendingExport BeginNotebookExport(
         string notebookId,
         string destinationPath,
         string exportFormat = "onepkg",
-        IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        IProgress<string>? progress = null)
     {
         if (_oneNote == null)
             throw new InvalidOperationException("OneNote is not initialized.");
 
-        TryCloseOneNoteGracefully(progress);
+        // Get notebook name and path from hierarchy
+        _oneNote.GetHierarchy(notebookId, HierarchyScope.hsSelf, out string xml);
+        var xdoc         = XDocument.Parse(xml);
+        var notebookName = xdoc.Root?.Attribute("name")?.Value ?? "Notebook";
+        var notebookPath = xdoc.Root?.Attribute("path")?.Value ?? "";
 
-        var result = new ExportResult();
+        bool isCloud = notebookPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+                       notebookPath.StartsWith("http://",  StringComparison.OrdinalIgnoreCase);
 
-        try
+        progress?.Report($"Exporting: {notebookName} (format: {exportFormat})");
+
+        string fileExtension = exportFormat.ToLowerInvariant() switch
         {
-            // Get notebook name and path from hierarchy
-            _oneNote.GetHierarchy(notebookId, HierarchyScope.hsSelf, out string xml);
-            var xdoc         = XDocument.Parse(xml);
-            var notebookName = xdoc.Root?.Attribute("name")?.Value ?? "Notebook";
-            var notebookPath = xdoc.Root?.Attribute("path")?.Value ?? "";
+            "xps" => ".xps",
+            "pdf" => ".pdf",
+            _     => ".onepkg"
+        };
 
-            bool isCloud = notebookPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-                           notebookPath.StartsWith("http://",  StringComparison.OrdinalIgnoreCase);
-
-            progress?.Report($"Exporting: {notebookName} (format: {exportFormat})");
-
-            // Determine file extension and PublishFormat
-            string fileExtension = exportFormat.ToLowerInvariant() switch
-            {
-                "xps" => ".xps",
-                "pdf" => ".pdf",
-                _     => ".onepkg"
-            };
-
-            PublishFormat publishFormat = exportFormat.ToLowerInvariant() switch
-            {
-                "xps" => PublishFormat.pfXPS,
-                "pdf" => PublishFormat.pfPDF,
-                _     => PublishFormat.pfOneNotePackage
-            };
-
-            // Sanitize filename
-            var sanitizedName = string.Join("_", notebookName.Split(Path.GetInvalidFileNameChars()));
-            var fullPath      = Path.Combine(destinationPath, sanitizedName + fileExtension);
-
-            Directory.CreateDirectory(destinationPath);
-
-            // Open notebook (required for cloud notebooks)
-            _oneNote.OpenHierarchy(notebookPath, "", out string openedId, CreateFileType.cftNone);
-
-            // Remove existing file so WaitForFile doesn't detect the old file as done
-            if (File.Exists(fullPath))
-            {
-                progress?.Report("Removing previous export file...");
-                File.Delete(fullPath);
-            }
-
-            // Trigger the export (Publish returns immediately; OneNote writes async)
-            progress?.Report("OneNote is writing in the background...");
-            _oneNote.Publish(openedId, fullPath, publishFormat, "");
-
-            // Wait for the file to appear and stabilise
-            result = WaitForFile(fullPath, isCloud, progress, ct);
-
-            if (result.Success)
-                result.ExportedPath = fullPath;
-        }
-        catch (OperationCanceledException)
+        PublishFormat publishFormat = exportFormat.ToLowerInvariant() switch
         {
-            result.Success = false;
-            result.Message = "Export cancelled.";
-        }
-        catch (UnauthorizedAccessException ex)
+            "xps" => PublishFormat.pfXPS,
+            "pdf" => PublishFormat.pfPDF,
+            _     => PublishFormat.pfOneNotePackage
+        };
+
+        var sanitizedName = string.Join("_", notebookName.Split(Path.GetInvalidFileNameChars()));
+        var fullPath      = Path.Combine(destinationPath, sanitizedName + fileExtension);
+
+        Directory.CreateDirectory(destinationPath);
+
+        _oneNote.OpenHierarchy(notebookPath, "", out string openedId, CreateFileType.cftNone);
+
+        if (File.Exists(fullPath))
         {
-            result.Success = false;
-            result.Message = $"Access denied: {ex.Message}";
-        }
-        catch (COMException ex) when (ex.HResult == unchecked((int)0x8004201A))
-        {
-            result.Success = false;
-            result.Message = "OneNote Error 0x8004201A: Cannot export. " +
-                             "The notebook may have password-protected sections or be offline.";
-        }
-        catch (COMException ex) when (ex.HResult == unchecked((int)0x800706BA))
-        {
-            result.Success = false;
-            result.Message = "OneNote RPC timeout (0x800706BA). " +
-                             "Large notebooks may fail with PDF/XPS. Try .onepkg format instead.";
-        }
-        catch (COMException ex)
-        {
-            result.Success = false;
-            result.Message = $"OneNote COM error 0x{ex.HResult:X}: {ex.Message}";
-        }
-        catch (Exception ex)
-        {
-            result.Success = false;
-            result.Message = $"Error during export: {ex.Message}";
+            progress?.Report("Removing previous export file...");
+            File.Delete(fullPath);
         }
 
-        return result;
-    }
+        progress?.Report("OneNote is writing in the background...");
+        _oneNote.Publish(openedId, fullPath, publishFormat, "");
 
-    /// <summary>
-    /// Exports all notebooks sequentially. Calls ExportNotebook for each.
-    /// </summary>
-    public ExportResult ExportAllNotebooks(
-        string destinationPath,
-        string exportFormat = "onepkg",
-        IProgress<string>? progress = null,
-        CancellationToken ct = default)
-    {
-        var result       = new ExportResult { Success = true };
-        int exported     = 0, failed = 0;
-        var messages     = new List<string>();
-
-        try
-        {
-            var notebooks = GetNotebooks();
-            progress?.Report($"Starting export of {notebooks.Count} notebook(s)...");
-
-            foreach (var nb in notebooks)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                progress?.Report($"Exporting {exported + failed + 1}/{notebooks.Count}: {nb.Name}");
-
-                var r = ExportNotebook(nb.Id, destinationPath, exportFormat, progress, ct);
-
-                if (r.Success)
-                {
-                    exported++;
-                    messages.Add($"✓ {nb.Name}");
-                }
-                else
-                {
-                    failed++;
-                    messages.Add($"✗ {nb.Name}: {r.Message}");
-                }
-            }
-
-            result.Success      = failed == 0;
-            result.Message      = $"Export completed: {exported} successful, {failed} failed\n\n" +
-                                   string.Join("\n", messages);
-            result.ExportedPath = destinationPath;
-        }
-        catch (OperationCanceledException)
-        {
-            result.Success = false;
-            result.Message = "Export cancelled.";
-        }
-        catch (Exception ex)
-        {
-            result.Success = false;
-            result.Message = $"Fatal export error: {ex.Message}";
-        }
-
-        return result;
+        return new PendingExport(fullPath, isCloud);
     }
 
     /// <summary>
     /// Returns all exportable sections in a notebook (including those inside section groups).
-    /// Skips encrypted and recycle-bin entries. Call via Task.Run from the UI layer.
+    /// Skips encrypted and recycle-bin entries. Called by OneNoteComWorker on its STA thread.
     /// </summary>
     public List<SectionInfo> GetSections(string notebookId)
     {
@@ -281,100 +168,55 @@ public class OneNoteService : IDisposable
     }
 
     /// <summary>
-    /// Exports a single section. Blocks the calling thread until finished.
-    /// Sections are written into a notebook-named subfolder to avoid filename collisions.
-    /// Call via Task.Run from the UI layer.
+    /// Starts a section export and returns as soon as OneNote accepted the
+    /// publish request. File completion is monitored outside the STA thread.
     /// </summary>
-    public ExportResult ExportSection(
+    public PendingExport BeginSectionExport(
         SectionInfo section,
         string destinationPath,
         string exportFormat = "onepkg",
-        IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        IProgress<string>? progress = null)
     {
         if (_oneNote == null)
             throw new InvalidOperationException("OneNote is not initialized.");
 
-        TryCloseOneNoteGracefully(progress);
+        progress?.Report($"Exporting section: {section.Name} (format: {exportFormat})");
 
-        var result = new ExportResult();
-
-        try
+        string fileExtension = exportFormat.ToLowerInvariant() switch
         {
-            progress?.Report($"Exporting section: {section.Name} (format: {exportFormat})");
+            "xps" => ".xps",
+            "pdf" => ".pdf",
+            _     => ".onepkg"
+        };
 
-            string fileExtension = exportFormat.ToLowerInvariant() switch
-            {
-                "xps" => ".xps",
-                "pdf" => ".pdf",
-                _     => ".onepkg"
-            };
-
-            PublishFormat publishFormat = exportFormat.ToLowerInvariant() switch
-            {
-                "xps" => PublishFormat.pfXPS,
-                "pdf" => PublishFormat.pfPDF,
-                _     => PublishFormat.pfOneNotePackage
-            };
-
-            // Sections go into a notebook-named subfolder to prevent filename clashes
-            var sanitizedNb  = string.Join("_", section.NotebookName.Split(Path.GetInvalidFileNameChars()));
-            var sanitizedSec = string.Join("_", section.Name.Split(Path.GetInvalidFileNameChars()));
-            var notebookDir  = Path.Combine(destinationPath, sanitizedNb);
-            var fullPath     = Path.Combine(notebookDir, sanitizedSec + fileExtension);
-
-            Directory.CreateDirectory(notebookDir);
-
-            // Open the parent notebook (required before Publish on a section within it)
-            progress?.Report("Opening parent notebook...");
-            _oneNote.OpenHierarchy(section.NotebookPath, "", out _, CreateFileType.cftNone);
-
-            if (File.Exists(fullPath))
-            {
-                progress?.Report("Removing previous export file...");
-                File.Delete(fullPath);
-            }
-
-            progress?.Report("OneNote is writing in the background...");
-            _oneNote.Publish(section.Id, fullPath, publishFormat, "");
-
-            result = WaitForFile(fullPath, section.IsCloud, progress, ct);
-
-            if (result.Success)
-                result.ExportedPath = fullPath;
-        }
-        catch (OperationCanceledException)
+        PublishFormat publishFormat = exportFormat.ToLowerInvariant() switch
         {
-            result.Success = false;
-            result.Message = "Export cancelled.";
-        }
-        catch (UnauthorizedAccessException ex)
+            "xps" => PublishFormat.pfXPS,
+            "pdf" => PublishFormat.pfPDF,
+            _     => PublishFormat.pfOneNotePackage
+        };
+
+        // Sections go into a notebook-named subfolder to prevent filename clashes
+        var sanitizedNb  = string.Join("_", section.NotebookName.Split(Path.GetInvalidFileNameChars()));
+        var sanitizedSec = string.Join("_", section.Name.Split(Path.GetInvalidFileNameChars()));
+        var notebookDir  = Path.Combine(destinationPath, sanitizedNb);
+        var fullPath     = Path.Combine(notebookDir, sanitizedSec + fileExtension);
+
+        Directory.CreateDirectory(notebookDir);
+
+        progress?.Report("Opening parent notebook...");
+        _oneNote.OpenHierarchy(section.NotebookPath, "", out _, CreateFileType.cftNone);
+
+        if (File.Exists(fullPath))
         {
-            result.Success = false;
-            result.Message = $"Access denied: {ex.Message}";
-        }
-        catch (COMException ex) when (ex.HResult == unchecked((int)0x8004201A))
-        {
-            result.Success = false;
-            result.Message = "Cannot export section (0x8004201A). It may be password-protected or offline.";
-        }
-        catch (COMException ex) when (ex.HResult == unchecked((int)0x800706BA))
-        {
-            result.Success = false;
-            result.Message = "RPC timeout (0x800706BA). Try .onepkg format.";
-        }
-        catch (COMException ex)
-        {
-            result.Success = false;
-            result.Message = $"COM error 0x{ex.HResult:X}: {ex.Message}";
-        }
-        catch (Exception ex)
-        {
-            result.Success = false;
-            result.Message = $"Error: {ex.Message}";
+            progress?.Report("Removing previous export file...");
+            File.Delete(fullPath);
         }
 
-        return result;
+        progress?.Report("OneNote is writing in the background...");
+        _oneNote.Publish(section.Id, fullPath, publishFormat, "");
+
+        return new PendingExport(fullPath, section.IsCloud);
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -383,7 +225,7 @@ public class OneNoteService : IDisposable
     /// Polls until the exported file exists and its size has been stable for 10 seconds.
     /// Cloud notebooks get a 30-minute timeout; local notebooks get 20 minutes.
     /// </summary>
-    private static ExportResult WaitForFile(
+    internal static async Task<ExportResult> WaitForFileAsync(
         string fullPath,
         bool isCloud,
         IProgress<string>? progress,
@@ -397,7 +239,7 @@ public class OneNoteService : IDisposable
         long fileSize        = 0;
 
         // Initial wait – give OneNote a moment to start writing
-        if (ct.WaitHandle.WaitOne(checkIntervalMs)) ct.ThrowIfCancellationRequested();
+        await Task.Delay(checkIntervalMs, ct).ConfigureAwait(false);
 
         for (int i = 0; i < maxAttempts; i++)
         {
@@ -447,7 +289,7 @@ public class OneNoteService : IDisposable
                     progress?.Report($"Waiting for file creation... ({i * checkIntervalMs / 1000}s)");
             }
 
-            if (ct.WaitHandle.WaitOne(checkIntervalMs)) ct.ThrowIfCancellationRequested();
+            await Task.Delay(checkIntervalMs, ct).ConfigureAwait(false);
         }
 
         // Timed out
@@ -460,6 +302,39 @@ public class OneNoteService : IDisposable
             Success = false,
             Message = $"Timeout after {timeoutMin} min. OneNote may still be writing in the background. " +
                       $"Check {Path.GetDirectoryName(fullPath)} again in a few minutes."
+        };
+    }
+
+    internal static ExportResult CreateExportFailure(Exception exception)
+    {
+        return exception switch
+        {
+            UnauthorizedAccessException ex => new ExportResult
+            {
+                Success = false,
+                Message = $"Access denied: {ex.Message}"
+            },
+            COMException ex when ex.HResult == unchecked((int)0x8004201A) => new ExportResult
+            {
+                Success = false,
+                Message = "OneNote error 0x8004201A: The export file already exists."
+            },
+            COMException ex when ex.HResult == unchecked((int)0x800706BA) => new ExportResult
+            {
+                Success = false,
+                Message = "OneNote RPC timeout (0x800706BA). " +
+                          "Large notebooks may fail with PDF/XPS. Try .onepkg format instead."
+            },
+            COMException ex => new ExportResult
+            {
+                Success = false,
+                Message = $"OneNote COM error 0x{ex.HResult:X8}: {ex.Message}"
+            },
+            _ => new ExportResult
+            {
+                Success = false,
+                Message = $"Error during export: {exception.Message}"
+            }
         };
     }
 
@@ -501,30 +376,6 @@ public class OneNoteService : IDisposable
         }
     }
 
-    private void TryCloseOneNoteGracefully(IProgress<string>? progress)
-    {
-        if (_oneNoteClosedAttempted) return;
-        _oneNoteClosedAttempted = true;
-
-        var procs = Process.GetProcessesByName("ONENOTE");
-        if (procs.Length == 0) return;
-
-        progress?.Report($"Closing {procs.Length} OneNote process(es) before export...");
-
-        foreach (var p in procs)
-        {
-            try
-            {
-                if (p.CloseMainWindow())
-                    p.WaitForExit(5000);
-            }
-            catch { /* ignore */ }
-            finally { p.Dispose(); }
-        }
-
-        Thread.Sleep(1000);
-    }
-
     private static string FormatBytes(long bytes)
     {
         string[] units = { "Bytes", "KB", "MB", "GB" };
@@ -546,8 +397,6 @@ public class OneNoteService : IDisposable
             {
                 Marshal.ReleaseComObject(_oneNote);
                 _oneNote = null;
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
             }
             catch { /* ignore cleanup errors */ }
         }

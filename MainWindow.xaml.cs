@@ -16,7 +16,7 @@ public partial class MainWindow : Window
 {
     // ── State ────────────────────────────────────────────────────────────────
 
-    private OneNoteService?       _service;
+    private OneNoteComWorker?     _service;
     private CancellationTokenSource? _exportCts;
     private bool                  _exportInProgress = false;
 
@@ -50,8 +50,8 @@ public partial class MainWindow : Window
 
         try
         {
-            _service = await Task.Run(() => new OneNoteService());
-            var info = await Task.Run(() => _service.GetVersionInfo());
+            _service = await OneNoteComWorker.CreateAsync();
+            var info = await _service.GetVersionInfoAsync();
 
             if (info.OneNoteInstalled)
                 SetVersionBadge($"✓ {info.OneNoteVersion}", StatusKind.Success);
@@ -77,7 +77,7 @@ public partial class MainWindow : Window
             if (_service == null)
                 throw new InvalidOperationException("OneNote Helper is not available.");
 
-            var list = await Task.Run(() => _service.GetNotebooks());
+            var list = await _service.GetNotebooksAsync();
 
             ShowNotebookOverlay(OverlayKind.None);
 
@@ -313,7 +313,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var sections = await Task.Run(() => _service.GetSections(nb.Id));
+            var sections = await _service.GetSectionsAsync(nb.Id);
 
             nb.Sections.Clear();
             foreach (var s in sections)
@@ -401,7 +401,7 @@ public partial class MainWindow : Window
         if (!_exportInProgress) return;
 
         var confirm = MessageBox.Show(
-            "Do you really want to cancel the export?\n\nWarning: This will terminate OneNote and OneNoteHelper processes!",
+            "Do you really want to cancel the export?\n\nThe current export will stop without closing OneNote.",
             "Cancel Export",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
@@ -410,11 +410,7 @@ public partial class MainWindow : Window
 
         ShowStatus("Cancelling export...", StatusKind.Warning);
 
-        // Cancel via token
         _exportCts?.Cancel();
-
-        // Fallback: force-kill processes (mirrors Go CancelExport behaviour)
-        KillProcess("ONENOTE.EXE");
     }
 
     // ── Export implementations ───────────────────────────────────────────────
@@ -480,8 +476,8 @@ public partial class MainWindow : Window
 
             try
             {
-                var result = await Task.Run(
-                    () => _service.ExportNotebook(nb.Id, destPath, format, progress, ct), ct);
+                var result = await _service.ExportNotebookAsync(
+                    nb.Id, destPath, format, progress, ct);
 
                 if (result.Success) { successCount++; messages.Add($"✓ {nb.Name}"); }
                 else                { failCount++;    messages.Add($"✗ {nb.Name}: {result.Message}"); }
@@ -515,8 +511,8 @@ public partial class MainWindow : Window
 
             try
             {
-                var result = await Task.Run(
-                    () => _service.ExportSection(sec.Info, destPath, format, progress, ct), ct);
+                var result = await _service.ExportSectionAsync(
+                    sec.Info, destPath, format, progress, ct);
 
                 if (result.Success) { successCount++; messages.Add($"✓ {nb.Name}  /  {sec.Name}"); }
                 else                { failCount++;    messages.Add($"✗ {nb.Name}  /  {sec.Name}: {result.Message}"); }
@@ -548,11 +544,11 @@ public partial class MainWindow : Window
 
     // ── Utilities ────────────────────────────────────────────────────────────
 
-    private static void StartDialogWatcher(CancellationToken ct)
+    private void StartDialogWatcher(CancellationToken ct)
     {
         _ = Task.Run(() =>
         {
-            while (!ct.IsCancellationRequested)
+            while (!ct.IsCancellationRequested && _exportInProgress)
             {
                 try
                 {
@@ -586,24 +582,4 @@ public partial class MainWindow : Window
         });
     }
 
-    private static void KillProcess(string processName)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName               = "taskkill",
-                Arguments              = $"/F /IM {processName}",
-                UseShellExecute        = false,
-                CreateNoWindow         = true,
-                RedirectStandardOutput = true
-            };
-            using var p = Process.Start(psi);
-            p?.WaitForExit(5000);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"KillProcess({processName}): {ex.Message}");
-        }
-    }
 }

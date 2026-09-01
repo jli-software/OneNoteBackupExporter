@@ -12,8 +12,10 @@ Single-project WPF app, no subprocesses:
 
 ```
 MainWindow.xaml / .xaml.cs   (UI + code-behind)
-    ↕ direct method calls
-Services/OneNoteService.cs   (OneNote COM API wrapper)
+    ↕ async calls
+Services/OneNoteComWorker.cs (serialized STA thread + message pump)
+    ↕ synchronous calls on the owning STA thread
+Services/OneNoteService.cs   (low-level OneNote COM API wrapper)
     ↕ COM API
 OneNote Desktop
 ```
@@ -32,8 +34,8 @@ OneNoteExporterC#/
 │   └── Models.cs             NotebookInfo, ExportResult, VersionInfo,
 │                             BackupAvailability, NotebookViewModel
 ├── Services/
-│   └── OneNoteService.cs     COM wrapper: GetNotebooks, ExportNotebook,
-│                             ExportAllNotebooks, GetVersionInfo, Dispose
+│   ├── OneNoteComWorker.cs   Dedicated STA owner, serialized async facade
+│   └── OneNoteService.cs     Low-level hierarchy and publish COM calls
 └── Helpers/
     └── FileHelper.cs         Local backup path, CopyLocalBackup, OpenFolder,
                               GetDefaultDownloadsPath
@@ -60,16 +62,18 @@ dotnet publish -c Release -r win-x64 --self-contained true
 - **Do NOT add `<UseWindowsForms>true</UseWindowsForms>`** – causes namespace conflict with the COM `Application` class
 
 ### Threading Model
-- `OneNoteService` methods are synchronous and blocking (COM calls + polling with `Thread.Sleep`)
-- Always call service methods via `Task.Run(...)` from the UI layer
+- `OneNoteComWorker` owns `OneNoteService` and its COM object on one dedicated STA thread
+- All OneNote COM calls are dispatched through that thread's WPF `Dispatcher` message pump
+- Public worker methods are async and serialized; do not wrap them in `Task.Run(...)`
+- Export file polling runs asynchronously outside the STA thread while the serialization gate remains held
 - Use `IProgress<string>` for progress reporting (marshals back to UI thread automatically via `Progress<T>`)
-- Use `CancellationToken` for cooperative cancellation; `ct.WaitHandle.WaitOne(ms)` replaces `Thread.Sleep` in polling loops for cancellation-aware waits
+- Use `CancellationToken` for cooperative cancellation and `Task.Delay(..., ct)` in polling loops
 
 ### Export Process
-1. `OneNoteService` is initialized at window load via `Task.Run(() => new OneNoteService())`
-2. `GetNotebooks()` retrieves all notebooks via `GetHierarchy()` XML parse
-3. `ExportNotebook()` calls `OpenHierarchy()` then `Publish()` with the appropriate `PublishFormat` enum
-4. After `Publish()` returns (immediately), the service polls the output file until size is stable for 10 seconds (file write monitoring)
+1. `OneNoteComWorker.CreateAsync()` starts the STA thread and creates `OneNoteService` there
+2. `GetNotebooksAsync()` retrieves all notebooks via `GetHierarchy()` XML parse on the worker
+3. `ExportNotebookAsync()` dispatches `OpenHierarchy()` and `Publish()` to the STA worker
+4. After `Publish()` returns, async file polling waits until size is stable for 10 seconds while the STA message pump stays responsive
 5. Timeout: 20 min for local notebooks, 30 min for cloud (SharePoint/OneDrive)
 
 ### Export Formats
