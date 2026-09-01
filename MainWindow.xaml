@@ -32,6 +32,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Column="0"
@@ -48,12 +49,20 @@
                         BorderThickness="1"
                         CornerRadius="4"
                         Padding="8,4"
+                        Margin="0,0,9,0"
                         VerticalAlignment="Center">
                     <TextBlock x:Name="VersionText"
                                Text="Checking OneNote installation..."
                                Foreground="{StaticResource InfoFg}"
                                FontSize="12"/>
                 </Border>
+
+                <Button Grid.Column="2"
+                        Content="?"
+                        Style="{StaticResource AboutButtonStyle}"
+                        ToolTip="About and version"
+                        AutomationProperties.Name="About and version"
+                        Click="AboutButton_Click"/>
             </Grid>
         </Border>
 

@@ -33,7 +33,6 @@ public class ExportResult
 
 public class VersionInfo
 {
-    public string Version           { get; set; } = "2.0.0";
     public bool   OneNoteInstalled  { get; set; }
     public string OneNoteVersion    { get; set; } = "";
 }

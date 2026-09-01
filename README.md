@@ -7,7 +7,7 @@
 A Windows desktop application to export OneNote notebooks to portable formats.  
 Talks directly to OneNote Desktop via the COM AP.
 
-![version](https://img.shields.io/badge/version-1.1.0-blueviolet?style=flat-square)
+![version](https://img.shields.io/badge/version-1.2.0-blueviolet?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D7?style=flat-square&logo=windows&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square)
 ![built with](https://img.shields.io/badge/built%20with-.NET%2010%20%2F%20WPF-512BD4?style=flat-square&logo=dotnet&logoColor=white)

@@ -1,0 +1,91 @@
+<Window x:Class="OneNoteExporter.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Icon="icon.ico"
+        Title="About OneNote Backup Exporter"
+        Width="430" Height="305"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BgPage}">
+
+    <Border Margin="18"
+            Padding="22"
+            Background="{StaticResource BgCard}"
+            BorderBrush="{StaticResource BorderColor}"
+            BorderThickness="1"
+            CornerRadius="8">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Image Grid.Column="0"
+                       Source="icon.ico"
+                       Width="52" Height="52"
+                       Margin="0,0,15,0"/>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="OneNote Backup Exporter"
+                               FontSize="19"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource PrimaryBlue}"/>
+                    <TextBlock x:Name="VersionText"
+                               Margin="0,4,0,0"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource TextPrimary}"/>
+                    <TextBlock x:Name="BuildText"
+                               Margin="0,2,0,0"
+                               FontSize="11"
+                               Foreground="{StaticResource TextSecondary}"/>
+                </StackPanel>
+            </Grid>
+
+            <Border Grid.Row="1"
+                    Margin="0,18,0,14"
+                    Padding="12,9"
+                    Background="{StaticResource InfoBg}"
+                    BorderBrush="{StaticResource InfoBorder}"
+                    BorderThickness="1"
+                    CornerRadius="5">
+                <TextBlock Text="Reliable backups and exports for OneNote Desktop."
+                           TextAlignment="Center"
+                           Foreground="{StaticResource InfoFg}"
+                           FontSize="12"/>
+            </Border>
+
+            <StackPanel Grid.Row="2">
+                <TextBlock Text="Supports OneNote packages, PDF, XPS and local backup copies."
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           Foreground="{StaticResource TextSecondary}"
+                           FontSize="12"/>
+                <TextBlock Text="© 2026 JLI Software"
+                           Margin="0,8,0,0"
+                           TextAlignment="Center"
+                           Foreground="{StaticResource TextSecondary}"
+                           FontSize="11"/>
+            </StackPanel>
+
+            <Button Grid.Row="3"
+                    Content="Close"
+                    Style="{StaticResource SmallButtonStyle}"
+                    Width="90"
+                    Margin="0,16,0,0"
+                    HorizontalAlignment="Right"
+                    IsDefault="True"
+                    IsCancel="True"
+                    Click="CloseButton_Click"/>
+        </Grid>
+    </Border>
+</Window>

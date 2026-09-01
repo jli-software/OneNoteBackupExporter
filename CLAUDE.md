@@ -28,6 +28,7 @@ OneNoteExporterC#/
 ├── OneNoteExporter.sln
 ├── App.xaml                  Global styles (colors, buttons, inputs)
 ├── App.xaml.cs               Global exception handler
+├── AboutWindow.xaml/.cs      About dialog with runtime version/build metadata
 ├── MainWindow.xaml           Full UI layout
 ├── MainWindow.xaml.cs        All UI logic, async export flow
 ├── Models/
@@ -90,8 +91,8 @@ dotnet publish -c Release -r win-x64 --self-contained true
 - When selected in dropdown: all notebooks auto-checked, checkboxes disabled, warning shown
 
 ### OneNote COM Cleanup
-- `OneNoteService.Dispose()` is called in `MainWindow.Window_Closing`
-- `Dispose()` calls `Marshal.ReleaseComObject()` – does NOT kill the OneNote process
+- `OneNoteComWorker.Dispose()` is called in `MainWindow.Window_Closing`
+- The worker releases the COM object on its owning STA thread and does NOT kill OneNote
 - OneNote continues running in background after app closes (by design, avoids "could not be started on last attempt" error)
 
 ### Known COM Errors

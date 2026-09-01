@@ -295,6 +295,12 @@ public partial class MainWindow : Window
     private void Section_SelectionChanged(object sender, RoutedEventArgs e)
         => UpdateExportButtonState();
 
+    private void AboutButton_Click(object sender, RoutedEventArgs e)
+    {
+        var aboutWindow = new AboutWindow { Owner = this };
+        aboutWindow.ShowDialog();
+    }
+
     private async void ExpandSections_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.DataContext is not NotebookViewModel nb) return;
