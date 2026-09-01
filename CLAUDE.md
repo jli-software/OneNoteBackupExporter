@@ -56,6 +56,17 @@ dotnet run
 dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
+## Release Asset Naming
+
+Public release assets must use stable, version-independent names so `releases/latest`
+download URLs remain permanent:
+
+- `OneNoteBackupExporter_Setup.exe`
+- `OneNoteBackupExporter_Setup.exe.sha256`
+
+Do not add the version number to public release asset filenames. Keep the semantic version
+in the project, installer metadata, Git tag, GitHub release title, and About dialog instead.
+
 ## Critical Technical Details
 
 ### COM Compatibility

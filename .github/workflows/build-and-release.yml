@@ -102,20 +102,18 @@ jobs:
 
       - name: Create SHA-256 checksum
         shell: pwsh
-        env:
-          APP_VERSION: ${{ steps.version.outputs.number }}
         run: |
-          $installer = Get-Item "artifacts\OneNoteBackupExporter_Setup_$env:APP_VERSION.exe"
+          $installer = Get-Item "artifacts\OneNoteBackupExporter_Setup.exe"
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $($installer.Name)" | Set-Content "$($installer.FullName).sha256" -Encoding ascii
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OneNoteBackupExporter-${{ steps.version.outputs.number }}
+          name: OneNoteBackupExporter-Windows-x64
           path: |
-            artifacts/OneNoteBackupExporter_Setup_${{ steps.version.outputs.number }}.exe
-            artifacts/OneNoteBackupExporter_Setup_${{ steps.version.outputs.number }}.exe.sha256
+            artifacts/OneNoteBackupExporter_Setup.exe
+            artifacts/OneNoteBackupExporter_Setup.exe.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -131,7 +129,7 @@ jobs:
       - name: Download installer artifact
         uses: actions/download-artifact@v4
         with:
-          name: OneNoteBackupExporter-${{ needs.build.outputs.version }}
+          name: OneNoteBackupExporter-Windows-x64
           path: artifacts
 
       - name: Create release and upload installer

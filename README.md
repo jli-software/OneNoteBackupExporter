@@ -5,7 +5,7 @@
 # OneNote Backup Exporter
 
 A Windows desktop application to export OneNote notebooks to portable formats.  
-Talks directly to OneNote Desktop via the COM AP.
+Talks directly to OneNote Desktop via the COM API.
 
 ![version](https://img.shields.io/badge/version-1.2.0-blueviolet?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D7?style=flat-square&logo=windows&logoColor=white)
@@ -20,9 +20,16 @@ Talks directly to OneNote Desktop via the COM AP.
 
 ## Download
 
-Go to [Releases](../../releases/latest) and download the latest
-`OneNoteBackupExporter_Setup_<version>.exe`. Run the installer, done. A matching
-`.sha256` file is included so the download can be verified.
+[Download the latest installer](https://github.com/jli-software/OneNoteBackupExporter/releases/latest/download/OneNoteBackupExporter_Setup.exe)
+or view the [latest release](../../releases/latest). The public asset names remain stable
+across releases:
+
+- `OneNoteBackupExporter_Setup.exe`
+- `OneNoteBackupExporter_Setup.exe.sha256`
+
+The matching [SHA-256 checksum](https://github.com/jli-software/OneNoteBackupExporter/releases/latest/download/OneNoteBackupExporter_Setup.exe.sha256)
+can be used to verify the download. The installed application version is available in the
+About dialog.
 
 ## Automated builds and releases
 

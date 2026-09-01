@@ -73,7 +73,7 @@ else {
     }
 
     # Print setup EXE details
-    $SetupExe = Get-ChildItem -Path $ArtifactDir -Filter 'OneNoteBackupExporter_Setup_*.exe' |
+    $SetupExe = Get-ChildItem -Path $ArtifactDir -Filter 'OneNoteBackupExporter_Setup.exe' |
                 Sort-Object LastWriteTime -Descending |
                 Select-Object -First 1
     if ($SetupExe) {

@@ -22,7 +22,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 OutputDir={#MyOutputDir}
-OutputBaseFilename=OneNoteBackupExporter_Setup_{#MyAppVersion}
+OutputBaseFilename=OneNoteBackupExporter_Setup
 SolidCompression=yes
 WizardStyle=modern
 
