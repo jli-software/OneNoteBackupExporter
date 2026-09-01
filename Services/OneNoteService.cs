@@ -1,5 +1,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Xml.Linq;
 using Microsoft.Office.Interop.OneNote;
 using OneNoteExporter.Models;
@@ -244,6 +246,7 @@ internal sealed class OneNoteService : IDisposable
         if (ns == null) return sections;
 
         CollectSections(xdoc.Root!, ns, notebookId, nbName, nbPath, isCloud, "", sections);
+        AssignCollisionSafeExportFileStems(sections);
         return sections;
     }
 
@@ -276,10 +279,12 @@ internal sealed class OneNoteService : IDisposable
             _     => PublishFormat.pfOneNotePackage
         };
 
-        // Preserve section-group folders so same-named sections in different
-        // groups never overwrite each other during automatic split exports.
+        // Preserve section-group folders and use the collision-safe stem assigned
+        // while loading the full hierarchy, so split exports never overwrite peers.
         var sanitizedNb  = string.Join("_", section.NotebookName.Split(Path.GetInvalidFileNameChars()));
-        var sanitizedSec = string.Join("_", section.Name.Split(Path.GetInvalidFileNameChars()));
+        var sanitizedSec = string.IsNullOrWhiteSpace(section.ExportFileStem)
+            ? SanitizeFileName(section.Name)
+            : section.ExportFileStem;
         var notebookDir  = Path.Combine(destinationPath, sanitizedNb);
         var sectionDir   = BuildSectionDirectory(notebookDir, section.GroupName);
         var finalPath    = Path.Combine(sectionDir, sanitizedSec + fileExtension);
@@ -321,6 +326,40 @@ internal sealed class OneNoteService : IDisposable
 
         return currentDirectory;
     }
+
+    /// <summary>
+    /// Keeps normal section filenames readable, but adds a stable short ID only when
+    /// two sections would resolve to the same case-insensitive Windows path after
+    /// sanitizing their group and section names.
+    /// </summary>
+    private static void AssignCollisionSafeExportFileStems(List<SectionInfo> sections)
+    {
+        foreach (var section in sections)
+            section.ExportFileStem = SanitizeFileName(section.Name);
+
+        var collisions = sections
+            .GroupBy(GetSanitizedSectionRelativePath, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1);
+
+        foreach (var collision in collisions)
+        {
+            foreach (var section in collision)
+            {
+                byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(section.Id));
+                string stableSuffix = Convert.ToHexString(hash.AsSpan(0, 4)).ToLowerInvariant();
+                section.ExportFileStem = $"{section.ExportFileStem}__{stableSuffix}";
+            }
+        }
+    }
+
+    private static string GetSanitizedSectionRelativePath(SectionInfo section)
+    {
+        string directory = BuildSectionDirectory("", section.GroupName);
+        return Path.Combine(directory, section.ExportFileStem);
+    }
+
+    private static string SanitizeFileName(string name)
+        => string.Join("_", name.Split(Path.GetInvalidFileNameChars()));
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
