@@ -78,6 +78,10 @@ dotnet publish -c Release -r win-x64 --self-contained true
 5. Async file polling waits until size is stable for 10 seconds while the STA message pump stays responsive
 6. A successful staging file atomically replaces the final export; previous good backups remain untouched on failure
 7. Timeout: 20 min for local notebooks, 30 min for cloud (SharePoint/OneDrive); polling timeouts are not retried
+8. OneNote does not expose notebook byte size through COM. Whole-notebook PDF/XPS
+   jobs therefore show a preflight choice: automatically split into individual
+   section exports (recommended), switch to `.onepkg`, or explicitly try the whole
+   rendered export anyway
 
 ### Export Formats
 | UI value | PublishFormat | Extension |

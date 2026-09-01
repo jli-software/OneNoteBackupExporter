@@ -53,12 +53,16 @@ The Microsoft Store version of OneNote is not supported.
 | Format | Notes |
 |---|---|
 | OneNote Package (.onepkg) | Recommended. Full-fidelity, re-importable into OneNote. |
-| XPS Document (.xps) | Good layout preservation. |
-| PDF Document (.pdf) | Universal, slightly lower quality on complex pages. |
+| XPS Document (.xps) | Good layout preservation. Large whole notebooks can be split into safer per-section exports. |
+| PDF Document (.pdf) | Universal, slightly lower quality on complex pages. Large whole notebooks can be split into safer per-section exports. |
 | Local Backup Copy | Copies the raw backup folder from `%LOCALAPPDATA%\Microsoft\OneNote\16.0\Sicherung`. Fastest option, all notebooks at once. |
 
 ## Notes
 
 - Password-protected sections cannot be exported. Unlock them in OneNote first.
 - Cloud notebooks (OneDrive, SharePoint) must be synced before export. Large notebooks can take several minutes.
-- If PDF or XPS export times out on a large notebook, use the OneNote Package format instead.
+- OneNote does not expose notebook size through its COM interface. Before a whole-notebook
+  PDF/XPS export, the app therefore offers to export each section separately (recommended),
+  create a complete `.onepkg` backup, or consciously try the whole rendered export. Split
+  exports include all exportable, unlocked sections and preserve section groups as folders
+  to avoid filename collisions. Use `.onepkg` when a single complete backup is required.

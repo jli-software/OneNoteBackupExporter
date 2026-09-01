@@ -348,6 +348,21 @@
                                FontSize="12"/>
                 </Border>
 
+                <!-- PDF/XPS reliability warning -->
+                <Border x:Name="RenderedFormatWarning"
+                        Background="{StaticResource WarningBg}"
+                        BorderBrush="{StaticResource WarningBorder}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="10,7"
+                        Margin="0,0,0,10"
+                        Visibility="Collapsed">
+                    <TextBlock x:Name="RenderedFormatWarningText"
+                               TextWrapping="Wrap"
+                               Foreground="{StaticResource WarningFg}"
+                               FontSize="12"/>
+                </Border>
+
                 <!-- Export + Cancel buttons -->
                 <Grid Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>

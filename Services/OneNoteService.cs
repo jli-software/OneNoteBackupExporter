@@ -276,16 +276,18 @@ internal sealed class OneNoteService : IDisposable
             _     => PublishFormat.pfOneNotePackage
         };
 
-        // Sections go into a notebook-named subfolder to prevent filename clashes
+        // Preserve section-group folders so same-named sections in different
+        // groups never overwrite each other during automatic split exports.
         var sanitizedNb  = string.Join("_", section.NotebookName.Split(Path.GetInvalidFileNameChars()));
         var sanitizedSec = string.Join("_", section.Name.Split(Path.GetInvalidFileNameChars()));
         var notebookDir  = Path.Combine(destinationPath, sanitizedNb);
-        var finalPath    = Path.Combine(notebookDir, sanitizedSec + fileExtension);
-        var stagingPath  = CreateStagingPath(notebookDir, sanitizedSec, fileExtension);
+        var sectionDir   = BuildSectionDirectory(notebookDir, section.GroupName);
+        var finalPath    = Path.Combine(sectionDir, sanitizedSec + fileExtension);
+        var stagingPath  = CreateStagingPath(sectionDir, sanitizedSec, fileExtension);
 
-        Directory.CreateDirectory(notebookDir);
+        Directory.CreateDirectory(sectionDir);
         CleanupStaleStagingFiles(
-            notebookDir, sanitizedSec, fileExtension, DateTime.UtcNow.AddDays(-2));
+            sectionDir, sanitizedSec, fileExtension, DateTime.UtcNow.AddDays(-2));
 
         progress?.Report("Opening parent notebook...");
         _oneNote.OpenHierarchy(section.NotebookPath, "", out _, CreateFileType.cftNone);
@@ -303,6 +305,21 @@ internal sealed class OneNoteService : IDisposable
         }
 
         return new PendingExport(stagingPath, finalPath, section.IsCloud);
+    }
+
+    private static string BuildSectionDirectory(string notebookDirectory, string groupName)
+    {
+        string currentDirectory = notebookDirectory;
+
+        foreach (string groupPart in groupName.Split(
+                     " / ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string sanitizedGroup = string.Join(
+                "_", groupPart.Split(Path.GetInvalidFileNameChars()));
+            currentDirectory = Path.Combine(currentDirectory, sanitizedGroup);
+        }
+
+        return currentDirectory;
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -460,7 +477,8 @@ internal sealed class OneNoteService : IDisposable
                                 exportFormat.Equals("xps", StringComparison.OrdinalIgnoreCase);
         string renderedFormatAdvice = isRenderedFormat
             ? " OneNote's PDF/XPS renderer is less reliable for large notebooks; " +
-              "try .onepkg if the problem continues."
+              "export the notebook as individual sections or use .onepkg for a " +
+              "complete backup."
             : "";
         string recoveryDetails = connectionRecoveryAttempted
             ? " The app reconnected to OneNote automatically, but the connection failed again."
