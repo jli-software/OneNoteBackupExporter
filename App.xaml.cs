@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using OneNoteExporter.Helpers;
 
 namespace OneNoteExporter;
 
@@ -16,7 +17,9 @@ public partial class App : Application
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         MessageBox.Show(
-            $"An unexpected error occurred:\n\n{e.Exception.Message}",
+            UserFacingError.Describe(
+                e.Exception,
+                "An unexpected error occurred. Please restart the app and try again."),
             "OneNote Exporter – Error",
             MessageBoxButton.OK,
             MessageBoxImage.Error);

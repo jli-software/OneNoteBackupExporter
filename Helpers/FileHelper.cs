@@ -63,7 +63,9 @@ public static class FileHelper
             {
                 Available = false,
                 Reason    = "read_error",
-                Message   = $"Error reading backup folder: {ex.Message}",
+                Message   = UserFacingError.Describe(
+                    ex,
+                    "The OneNote backup folder could not be read."),
                 Path      = backupPath
             };
         }
@@ -104,7 +106,13 @@ public static class FileHelper
         }
         catch (Exception ex)
         {
-            return new ExportResult { Success = false, Message = $"Error copying backup: {ex.Message}" };
+            return new ExportResult
+            {
+                Success = false,
+                Message = UserFacingError.Describe(
+                    ex,
+                    "The local OneNote backup could not be copied.")
+            };
         }
     }
 
@@ -122,7 +130,8 @@ public static class FileHelper
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Failed to open folder: {ex.Message}");
+            Debug.WriteLine(
+                UserFacingError.Describe(ex, "The destination folder could not be opened."));
         }
     }
 

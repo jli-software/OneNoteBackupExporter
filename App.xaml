@@ -146,6 +146,27 @@
             </Style.Triggers>
         </Style>
 
+        <!-- Compact header button for About/version information -->
+        <Style x:Key="AboutButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="30"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderColor}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{StaticResource PrimaryBlue}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template" Value="{StaticResource BorderedButtonTemplate}"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#EEF4FF"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource PrimaryBlue}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <!-- ===== TextBox Style ===== -->
         <Style TargetType="TextBox">
             <Setter Property="Padding"       Value="8,6"/>

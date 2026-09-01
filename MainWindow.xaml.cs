@@ -16,9 +16,10 @@ public partial class MainWindow : Window
 {
     // ── State ────────────────────────────────────────────────────────────────
 
-    private OneNoteService?       _service;
+    private OneNoteComWorker?     _service;
     private CancellationTokenSource? _exportCts;
     private bool                  _exportInProgress = false;
+    private bool                  _isLocalBackupMode = false;
 
     private readonly ObservableCollection<NotebookViewModel> _notebooks = new();
 
@@ -50,8 +51,8 @@ public partial class MainWindow : Window
 
         try
         {
-            _service = await Task.Run(() => new OneNoteService());
-            var info = await Task.Run(() => _service.GetVersionInfo());
+            _service = await OneNoteComWorker.CreateAsync();
+            var info = await _service.GetVersionInfoAsync();
 
             if (info.OneNoteInstalled)
                 SetVersionBadge($"✓ {info.OneNoteVersion}", StatusKind.Success);
@@ -61,7 +62,9 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _service = null;
-            SetVersionBadge($"⚠  {ex.Message}", StatusKind.Error);
+            SetVersionBadge(
+                $"⚠  {UserFacingError.Describe(ex, "OneNote Desktop connection failed.")}",
+                StatusKind.Error);
         }
     }
 
@@ -77,7 +80,7 @@ public partial class MainWindow : Window
             if (_service == null)
                 throw new InvalidOperationException("OneNote Helper is not available.");
 
-            var list = await Task.Run(() => _service.GetNotebooks());
+            var list = await _service.GetNotebooksAsync();
 
             ShowNotebookOverlay(OverlayKind.None);
 
@@ -96,7 +99,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowNotebookOverlay(OverlayKind.Error, $"Error loading notebooks: {ex.Message}");
+            ShowNotebookOverlay(
+                OverlayKind.Error,
+                UserFacingError.Describe(
+                    ex,
+                    "Notebooks could not be loaded. Open OneNote Desktop and try again."));
         }
 
         UpdateExportButtonState();
@@ -111,6 +118,27 @@ public partial class MainWindow : Window
         return "onepkg";
     }
 
+    private static bool IsRenderedFormat(string format)
+        => format.Equals("pdf", StringComparison.OrdinalIgnoreCase) ||
+           format.Equals("xps", StringComparison.OrdinalIgnoreCase);
+
+    private void UpdateRenderedFormatWarning(string format)
+    {
+        bool isRenderedFormat = IsRenderedFormat(format);
+        RenderedFormatWarning.Visibility = isRenderedFormat
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (!isRenderedFormat) return;
+
+        string formatName = format.Equals("pdf", StringComparison.OrdinalIgnoreCase)
+            ? "PDF"
+            : "XPS";
+        RenderedFormatWarningText.Text =
+            $"⚠ Whole-notebook {formatName} exports can fail in OneNote for large notebooks. " +
+            "Before export, the app will offer the safer section-by-section mode.";
+    }
+
     private void UpdateExportButtonState()
     {
         if (GetSelectedFormat() == "localbackup") return; // handled by ApplyLocalBackupMode
@@ -121,7 +149,7 @@ public partial class MainWindow : Window
         int sectionCount  = _notebooks.Sum(nb => nb.Sections.Count(s => s.IsSelected));
 
         bool hasAny = notebookCount > 0 || sectionCount > 0;
-        ExportButton.IsEnabled = hasAny;
+        ExportButton.IsEnabled = hasAny && !_exportInProgress;
 
         ExportButton.Content = (notebookCount, sectionCount) switch
         {
@@ -143,7 +171,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            LocalBackupItem.Content  = $"Local Backup Copy – Not available ({avail.Reason})";
+            LocalBackupItem.Content  = $"Local Backup Copy – Not available ({avail.Message})";
             LocalBackupItem.IsEnabled = false;
         }
     }
@@ -152,6 +180,7 @@ public partial class MainWindow : Window
     {
         if (enable)
         {
+            _isLocalBackupMode = true;
             BackupWarning.Visibility = Visibility.Visible;
 
             foreach (var nb in _notebooks)
@@ -170,12 +199,17 @@ public partial class MainWindow : Window
         }
         else
         {
+            bool wasLocalBackupMode = _isLocalBackupMode;
+            _isLocalBackupMode = false;
             BackupWarning.Visibility = Visibility.Collapsed;
 
-            foreach (var nb in _notebooks)
+            if (wasLocalBackupMode)
             {
-                nb.IsSelected = false;
-                nb.IsEnabled  = true;
+                foreach (var nb in _notebooks)
+                {
+                    nb.IsSelected = false;
+                    nb.IsEnabled  = true;
+                }
             }
 
             UpdateExportButtonState();
@@ -285,8 +319,10 @@ public partial class MainWindow : Window
         // Guard: may fire before UI is fully initialised
         if (BackupWarning == null) return;
 
-        bool isLocalBackup = GetSelectedFormat() == "localbackup";
+        string format = GetSelectedFormat();
+        bool isLocalBackup = format == "localbackup";
         ApplyLocalBackupMode(isLocalBackup);
+        UpdateRenderedFormatWarning(format);
     }
 
     private void Notebook_SelectionChanged(object sender, RoutedEventArgs e)
@@ -294,6 +330,12 @@ public partial class MainWindow : Window
 
     private void Section_SelectionChanged(object sender, RoutedEventArgs e)
         => UpdateExportButtonState();
+
+    private void AboutButton_Click(object sender, RoutedEventArgs e)
+    {
+        var aboutWindow = new AboutWindow { Owner = this };
+        aboutWindow.ShowDialog();
+    }
 
     private async void ExpandSections_Click(object sender, RoutedEventArgs e)
     {
@@ -305,30 +347,138 @@ public partial class MainWindow : Window
             await LoadSectionsAsync(nb);
     }
 
-    private async Task LoadSectionsAsync(NotebookViewModel nb)
+    private async Task<bool> LoadSectionsAsync(
+        NotebookViewModel nb,
+        CancellationToken ct = default)
     {
-        if (_service == null) return;
+        if (_service == null) return false;
 
         nb.IsLoadingSections = true;
 
         try
         {
-            var sections = await Task.Run(() => _service.GetSections(nb.Id));
+            var sections = await _service.GetSectionsAsync(nb.Id, ct);
+            ct.ThrowIfCancellationRequested();
 
             nb.Sections.Clear();
             foreach (var s in sections)
                 nb.Sections.Add(new SectionViewModel(s));
 
             nb.HasSectionsLoaded = true;
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            ShowStatus($"Could not load sections for '{nb.Name}': {ex.Message}", StatusKind.Error);
+            ShowStatus(
+                UserFacingError.Describe(
+                    ex,
+                    $"Sections for '{nb.Name}' could not be loaded."),
+                StatusKind.Error);
+            return false;
         }
         finally
         {
             nb.IsLoadingSections = false; // fires SectionsEmpty + IsSectionsContentVisible
         }
+    }
+
+    private async Task<bool> ConvertNotebookJobsToSectionsAsync(
+        List<NotebookViewModel> notebookJobs,
+        List<(NotebookViewModel Notebook, SectionViewModel Section)> sectionJobs,
+        string format,
+        CancellationToken ct)
+    {
+        int notebookIndex = 0;
+
+        foreach (var notebook in notebookJobs)
+        {
+            ct.ThrowIfCancellationRequested();
+            notebookIndex++;
+            ShowProgress(
+                $"Preparing safer {format.ToUpperInvariant()} export...\n" +
+                $"Loading sections for notebook {notebookIndex}/{notebookJobs.Count}: " +
+                notebook.Name);
+
+            if (!notebook.HasSectionsLoaded && !await LoadSectionsAsync(notebook, ct))
+            {
+                HideProgress();
+                return false;
+            }
+
+            if (notebook.Sections.Count == 0)
+            {
+                HideProgress();
+                ShowStatus(
+                    $"No exportable sections were found in '{notebook.Name}'. " +
+                    "Use a OneNote package for a complete backup.",
+                    StatusKind.Warning);
+                return false;
+            }
+
+            ct.ThrowIfCancellationRequested();
+
+            foreach (var section in notebook.Sections)
+            {
+                bool alreadyQueued = sectionJobs.Any(job => job.Section.Id == section.Id);
+                if (!alreadyQueued)
+                    sectionJobs.Add((notebook, section));
+            }
+        }
+
+        notebookJobs.Clear();
+        return true;
+    }
+
+    private async Task<(bool Continue, string Format)> ApplyRenderedExportGuardAsync(
+        List<NotebookViewModel> notebookJobs,
+        List<(NotebookViewModel Notebook, SectionViewModel Section)> sectionJobs,
+        string format,
+        CancellationToken ct)
+    {
+        if (!IsRenderedFormat(format) || notebookJobs.Count == 0)
+            return (true, format);
+
+        var warningWindow = new RenderedExportWarningWindow(
+            format,
+            notebookJobs.Count,
+            sectionJobs.Count > 0)
+        {
+            Owner = this
+        };
+        warningWindow.ShowDialog();
+
+        switch (warningWindow.Choice)
+        {
+            case RenderedExportChoice.IndividualSections:
+                bool converted = await ConvertNotebookJobsToSectionsAsync(
+                    notebookJobs, sectionJobs, format, ct);
+                return (converted, format);
+
+            case RenderedExportChoice.OneNotePackage:
+                SelectFormat("onepkg");
+                return (true, "onepkg");
+
+            case RenderedExportChoice.WholeNotebook:
+                return (true, format);
+
+            default:
+                return (false, format);
+        }
+    }
+
+    private void SelectFormat(string format)
+    {
+        var item = FormatCombo.Items
+            .OfType<ComboBoxItem>()
+            .FirstOrDefault(candidate => string.Equals(
+                candidate.Tag?.ToString(), format, StringComparison.OrdinalIgnoreCase));
+
+        if (item != null)
+            FormatCombo.SelectedItem = item;
     }
 
     private async void ExportButton_Click(object sender, RoutedEventArgs e)
@@ -385,7 +535,22 @@ public partial class MainWindow : Window
             if (format == "localbackup")
                 await RunLocalBackupAsync(destPath);
             else
-                await RunComExportAsync(notebookJobs!, sectionJobs!, destPath, format, _exportCts.Token);
+            {
+                var prepared = await ApplyRenderedExportGuardAsync(
+                    notebookJobs!, sectionJobs!, format, _exportCts.Token);
+
+                if (!prepared.Continue)
+                    return;
+
+                _exportCts.Token.ThrowIfCancellationRequested();
+                await RunComExportAsync(
+                    notebookJobs!, sectionJobs!, destPath, prepared.Format, _exportCts.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            HideProgress();
+            ShowStatus("Export cancelled.", StatusKind.Warning);
         }
         finally
         {
@@ -401,7 +566,7 @@ public partial class MainWindow : Window
         if (!_exportInProgress) return;
 
         var confirm = MessageBox.Show(
-            "Do you really want to cancel the export?\n\nWarning: This will terminate OneNote and OneNoteHelper processes!",
+            "Do you really want to cancel the export?\n\nThe current export will stop without closing OneNote.",
             "Cancel Export",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
@@ -410,11 +575,7 @@ public partial class MainWindow : Window
 
         ShowStatus("Cancelling export...", StatusKind.Warning);
 
-        // Cancel via token
         _exportCts?.Cancel();
-
-        // Fallback: force-kill processes (mirrors Go CancelExport behaviour)
-        KillProcess("ONENOTE.EXE");
     }
 
     // ── Export implementations ───────────────────────────────────────────────
@@ -441,7 +602,9 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             HideProgress();
-            ShowStatus($"❌ Error during export: {ex.Message}", StatusKind.Error);
+            ShowStatus(
+                $"❌ {UserFacingError.Describe(ex, "The local backup export could not be completed.")}",
+                StatusKind.Error);
         }
     }
 
@@ -452,6 +615,8 @@ public partial class MainWindow : Window
         string format,
         CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+
         if (_service == null)
         {
             ShowStatus("OneNote Helper is not available. Please ensure OneNote Desktop is installed.", StatusKind.Error);
@@ -469,7 +634,7 @@ public partial class MainWindow : Window
         // ── Notebook-level exports ────────────────────────────────────────────
         foreach (var nb in notebookJobs)
         {
-            if (ct.IsCancellationRequested) break;
+            ct.ThrowIfCancellationRequested();
             jobIndex++;
 
             var label    = $"Notebook {jobIndex}/{totalJobs}: {nb.Name}";
@@ -480,10 +645,17 @@ public partial class MainWindow : Window
 
             try
             {
-                var result = await Task.Run(
-                    () => _service.ExportNotebook(nb.Id, destPath, format, progress, ct), ct);
+                var result = await _service.ExportNotebookAsync(
+                    nb.Id, destPath, format, progress, ct);
 
-                if (result.Success) { successCount++; messages.Add($"✓ {nb.Name}"); }
+                if (result.Success)
+                {
+                    successCount++;
+                    string retryNote = result.RecoveredAfterRetry
+                        ? " (recovered after COM retry)"
+                        : "";
+                    messages.Add($"✓ {nb.Name}{retryNote}");
+                }
                 else                { failCount++;    messages.Add($"✗ {nb.Name}: {result.Message}"); }
             }
             catch (OperationCanceledException)
@@ -495,7 +667,9 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 failCount++;
-                messages.Add($"✗ {nb.Name}: {ex.Message}");
+                messages.Add(
+                    $"✗ {nb.Name}: " +
+                    UserFacingError.Describe(ex, "The export could not be completed."));
             }
 
             await Task.Delay(300, CancellationToken.None);
@@ -504,7 +678,7 @@ public partial class MainWindow : Window
         // ── Section-level exports ─────────────────────────────────────────────
         foreach (var (nb, sec) in sectionJobs)
         {
-            if (ct.IsCancellationRequested) break;
+            ct.ThrowIfCancellationRequested();
             jobIndex++;
 
             var label    = $"Section {jobIndex}/{totalJobs}: {sec.Name}  ({nb.Name})";
@@ -515,10 +689,17 @@ public partial class MainWindow : Window
 
             try
             {
-                var result = await Task.Run(
-                    () => _service.ExportSection(sec.Info, destPath, format, progress, ct), ct);
+                var result = await _service.ExportSectionAsync(
+                    sec.Info, destPath, format, progress, ct);
 
-                if (result.Success) { successCount++; messages.Add($"✓ {nb.Name}  /  {sec.Name}"); }
+                if (result.Success)
+                {
+                    successCount++;
+                    string retryNote = result.RecoveredAfterRetry
+                        ? " (recovered after COM retry)"
+                        : "";
+                    messages.Add($"✓ {nb.Name}  /  {sec.Name}{retryNote}");
+                }
                 else                { failCount++;    messages.Add($"✗ {nb.Name}  /  {sec.Name}: {result.Message}"); }
             }
             catch (OperationCanceledException)
@@ -530,7 +711,9 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 failCount++;
-                messages.Add($"✗ {nb.Name}  /  {sec.Name}: {ex.Message}");
+                messages.Add(
+                    $"✗ {nb.Name}  /  {sec.Name}: " +
+                    UserFacingError.Describe(ex, "The export could not be completed."));
             }
 
             await Task.Delay(300, CancellationToken.None);
@@ -548,11 +731,11 @@ public partial class MainWindow : Window
 
     // ── Utilities ────────────────────────────────────────────────────────────
 
-    private static void StartDialogWatcher(CancellationToken ct)
+    private void StartDialogWatcher(CancellationToken ct)
     {
         _ = Task.Run(() =>
         {
-            while (!ct.IsCancellationRequested)
+            while (!ct.IsCancellationRequested && _exportInProgress)
             {
                 try
                 {
@@ -586,24 +769,4 @@ public partial class MainWindow : Window
         });
     }
 
-    private static void KillProcess(string processName)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName               = "taskkill",
-                Arguments              = $"/F /IM {processName}",
-                UseShellExecute        = false,
-                CreateNoWindow         = true,
-                RedirectStandardOutput = true
-            };
-            using var p = Process.Start(psi);
-            p?.WaitForExit(5000);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"KillProcess({processName}): {ex.Message}");
-        }
-    }
 }

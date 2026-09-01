@@ -5,9 +5,9 @@
 # OneNote Backup Exporter
 
 A Windows desktop application to export OneNote notebooks to portable formats.  
-Talks directly to OneNote Desktop via the COM AP.
+Talks directly to OneNote Desktop via the COM API.
 
-![version](https://img.shields.io/badge/version-1.1.0-blueviolet?style=flat-square)
+![version](https://img.shields.io/badge/version-1.2.0-blueviolet?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D7?style=flat-square&logo=windows&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square)
 ![built with](https://img.shields.io/badge/built%20with-.NET%2010%20%2F%20WPF-512BD4?style=flat-square&logo=dotnet&logoColor=white)
@@ -20,9 +20,16 @@ Talks directly to OneNote Desktop via the COM AP.
 
 ## Download
 
-Go to [Releases](../../releases/latest) and download the latest
-`OneNoteBackupExporter_Setup_<version>.exe`. Run the installer, done. A matching
-`.sha256` file is included so the download can be verified.
+[Download the latest installer](https://github.com/jli-software/OneNoteBackupExporter/releases/latest/download/OneNoteBackupExporter_Setup.exe)
+or view the [latest release](../../releases/latest). The public asset names remain stable
+across releases:
+
+- `OneNoteBackupExporter_Setup.exe`
+- `OneNoteBackupExporter_Setup.exe.sha256`
+
+The matching [SHA-256 checksum](https://github.com/jli-software/OneNoteBackupExporter/releases/latest/download/OneNoteBackupExporter_Setup.exe.sha256)
+can be used to verify the download. The installed application version is available in the
+About dialog.
 
 ## Automated builds and releases
 
@@ -53,12 +60,16 @@ The Microsoft Store version of OneNote is not supported.
 | Format | Notes |
 |---|---|
 | OneNote Package (.onepkg) | Recommended. Full-fidelity, re-importable into OneNote. |
-| XPS Document (.xps) | Good layout preservation. |
-| PDF Document (.pdf) | Universal, slightly lower quality on complex pages. |
+| XPS Document (.xps) | Good layout preservation. Large whole notebooks can be split into safer per-section exports. |
+| PDF Document (.pdf) | Universal, slightly lower quality on complex pages. Large whole notebooks can be split into safer per-section exports. |
 | Local Backup Copy | Copies the raw backup folder from `%LOCALAPPDATA%\Microsoft\OneNote\16.0\Sicherung`. Fastest option, all notebooks at once. |
 
 ## Notes
 
 - Password-protected sections cannot be exported. Unlock them in OneNote first.
 - Cloud notebooks (OneDrive, SharePoint) must be synced before export. Large notebooks can take several minutes.
-- If PDF or XPS export times out on a large notebook, use the OneNote Package format instead.
+- OneNote does not expose notebook size through its COM interface. Before a whole-notebook
+  PDF/XPS export, the app therefore offers to export each section separately (recommended),
+  create a complete `.onepkg` backup, or consciously try the whole rendered export. Split
+  exports include all exportable, unlocked sections and preserve section groups as folders
+  to avoid filename collisions. Use `.onepkg` when a single complete backup is required.

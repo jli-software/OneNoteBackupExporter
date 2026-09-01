@@ -1,6 +1,6 @@
 #define MyAppName      "OneNoteBackupExporter"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.1.0"
+  #define MyAppVersion "1.2.0"
 #endif
 #define MyAppPublisher "JLI Software"
 #define MyAppURL       "https://github.com/jli-software/OneNoteBackupExporter"
@@ -22,7 +22,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 OutputDir={#MyOutputDir}
-OutputBaseFilename=OneNoteBackupExporter_Setup_{#MyAppVersion}
+OutputBaseFilename=OneNoteBackupExporter_Setup
 SolidCompression=yes
 WizardStyle=modern
 

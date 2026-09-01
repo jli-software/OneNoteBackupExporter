@@ -20,8 +20,9 @@ public class SectionInfo
     public string NotebookId   { get; set; } = "";
     public string NotebookName { get; set; } = "";
     public string NotebookPath { get; set; } = "";
-    public string GroupName    { get; set; } = ""; // empty when section is directly in notebook
-    public bool   IsCloud      { get; set; }
+    public string GroupName      { get; set; } = ""; // empty when section is directly in notebook
+    public string ExportFileStem { get; set; } = ""; // collision-safe; UI continues to show Name
+    public bool   IsCloud        { get; set; }
 }
 
 public class ExportResult
@@ -29,11 +30,12 @@ public class ExportResult
     public bool   Success      { get; set; }
     public string Message      { get; set; } = "";
     public string ExportedPath { get; set; } = "";
+    public int    AttemptCount { get; set; } = 1;
+    public bool   RecoveredAfterRetry { get; set; }
 }
 
 public class VersionInfo
 {
-    public string Version           { get; set; } = "2.0.0";
     public bool   OneNoteInstalled  { get; set; }
     public string OneNoteVersion    { get; set; } = "";
 }
