@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
 using Microsoft.Office.Interop.OneNote;
+using OneNoteExporter.Helpers;
 using OneNoteExporter.Models;
 
 namespace OneNoteExporter.Services;
@@ -473,7 +474,9 @@ internal sealed class OneNoteService : IDisposable
     internal static string DescribeComFailure(Exception exception)
     {
         if (exception is not COMException ex)
-            return exception.Message;
+            return UserFacingError.Describe(
+                exception,
+                "OneNote communication failed");
 
         return ex.HResult switch
         {
@@ -498,7 +501,8 @@ internal sealed class OneNoteService : IDisposable
             Message = $"OneNote communication failed: " +
                       $"{DescribeComFailure(originalException)}. " +
                       "The app tried to reconnect automatically, but OneNote Desktop " +
-                      $"could not be initialized again: {recoveryException.Message} " +
+                      "could not be initialized again " +
+                      $"({UserFacingError.GetTechnicalCode(recoveryException)}). " +
                       "Open OneNote, wait until synchronization has finished, and retry. " +
                       "The existing backup was not changed."
         };
@@ -528,7 +532,10 @@ internal sealed class OneNoteService : IDisposable
             UnauthorizedAccessException ex => new ExportResult
             {
                 Success = false,
-                Message = $"Access denied: {ex.Message} The existing backup was not changed."
+                Message = UserFacingError.Describe(
+                              ex,
+                              "Access to the destination folder was denied.") +
+                          " The existing backup was not changed."
             },
             COMException ex when ex.HResult == unchecked((int)0x8004201A) => new ExportResult
             {
@@ -576,13 +583,17 @@ internal sealed class OneNoteService : IDisposable
             COMException ex => new ExportResult
             {
                 Success = false,
-                Message = $"OneNote COM error 0x{ex.HResult:X8}: {ex.Message}"
+                Message = $"OneNote returned an unknown COM error (0x{ex.HResult:X8}). " +
+                          "Open OneNote, close any open dialogs, and try again. " +
+                          "The existing backup was not changed."
             },
             _ => new ExportResult
             {
                 Success = false,
-                Message = $"Error during export: {exception.Message} " +
-                          "The existing backup was not changed."
+                Message = UserFacingError.Describe(
+                              exception,
+                              "The export could not be completed.") +
+                          " The existing backup was not changed."
             }
         };
     }

@@ -38,8 +38,9 @@ OneNoteExporterC#/
 │   ├── OneNoteComWorker.cs   Dedicated STA owner, serialized async facade
 │   └── OneNoteService.cs     Low-level hierarchy and publish COM calls
 └── Helpers/
-    └── FileHelper.cs         Local backup path, CopyLocalBackup, OpenFolder,
-                              GetDefaultDownloadsPath
+    ├── FileHelper.cs         Local backup path, CopyLocalBackup, OpenFolder,
+    │                         GetDefaultDownloadsPath
+    └── UserFacingError.cs    Stable English error text and language-neutral codes
 ```
 
 ## Development Commands
@@ -135,7 +136,10 @@ Row 2 (Auto):   Export section (path, format dropdown, warning, buttons, status)
 - List background: `#F8F9FA`
 
 ### UI Language
-**English** – all UI strings are in English (matching the original Go/Wails frontend).
+**English** – all user-facing UI, error, progress, dialog, status, and completion strings
+must remain in English. Do not display raw `Exception.Message` values because Windows and
+OneNote COM messages follow the operating-system language. Use `UserFacingError` and a
+language-neutral HRESULT/error code while keeping internal diagnostic output non-sensitive.
 
 ### Key Behaviors
 - Export button disabled until ≥1 notebook selected; text = `"Export N notebook(s)"`

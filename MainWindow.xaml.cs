@@ -62,7 +62,9 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _service = null;
-            SetVersionBadge($"⚠  {ex.Message}", StatusKind.Error);
+            SetVersionBadge(
+                $"⚠  {UserFacingError.Describe(ex, "OneNote Desktop connection failed.")}",
+                StatusKind.Error);
         }
     }
 
@@ -97,7 +99,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowNotebookOverlay(OverlayKind.Error, $"Error loading notebooks: {ex.Message}");
+            ShowNotebookOverlay(
+                OverlayKind.Error,
+                UserFacingError.Describe(
+                    ex,
+                    "Notebooks could not be loaded. Open OneNote Desktop and try again."));
         }
 
         UpdateExportButtonState();
@@ -165,7 +171,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            LocalBackupItem.Content  = $"Local Backup Copy – Not available ({avail.Reason})";
+            LocalBackupItem.Content  = $"Local Backup Copy – Not available ({avail.Message})";
             LocalBackupItem.IsEnabled = false;
         }
     }
@@ -367,7 +373,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            ShowStatus($"Could not load sections for '{nb.Name}': {ex.Message}", StatusKind.Error);
+            ShowStatus(
+                UserFacingError.Describe(
+                    ex,
+                    $"Sections for '{nb.Name}' could not be loaded."),
+                StatusKind.Error);
             return false;
         }
         finally
@@ -592,7 +602,9 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             HideProgress();
-            ShowStatus($"❌ Error during export: {ex.Message}", StatusKind.Error);
+            ShowStatus(
+                $"❌ {UserFacingError.Describe(ex, "The local backup export could not be completed.")}",
+                StatusKind.Error);
         }
     }
 
@@ -655,7 +667,9 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 failCount++;
-                messages.Add($"✗ {nb.Name}: {ex.Message}");
+                messages.Add(
+                    $"✗ {nb.Name}: " +
+                    UserFacingError.Describe(ex, "The export could not be completed."));
             }
 
             await Task.Delay(300, CancellationToken.None);
@@ -697,7 +711,9 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 failCount++;
-                messages.Add($"✗ {nb.Name}  /  {sec.Name}: {ex.Message}");
+                messages.Add(
+                    $"✗ {nb.Name}  /  {sec.Name}: " +
+                    UserFacingError.Describe(ex, "The export could not be completed."));
             }
 
             await Task.Delay(300, CancellationToken.None);

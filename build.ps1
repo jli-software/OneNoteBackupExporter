@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Baut das OneNoteExporter-Projekt und kopiert das fertige Release in den Ordner "build".
+    Builds the OneNoteExporter project and copies the release output to the "build" folder.
 #>
 
 Set-StrictMode -Version Latest
@@ -16,18 +16,18 @@ $ProjectFile = Join-Path $ProjectRoot 'OneNoteExporter.csproj'
 $Version = $ProjectXml.Project.PropertyGroup.Version | Select-Object -First 1
 
 if (-not $Version) {
-    throw 'Keine <Version> in OneNoteExporter.csproj gefunden.'
+    throw 'No <Version> was found in OneNoteExporter.csproj.'
 }
 
-# ── 1. build-Ordner leeren / anlegen ─────────────────────────────────────────
-Write-Host ">> Bereite build-Ordner vor..." -ForegroundColor Cyan
+# ── 1. Prepare build folder ───────────────────────────────────────────────────
+Write-Host ">> Preparing build folder..." -ForegroundColor Cyan
 if (Test-Path $BuildDir) {
     Remove-Item -Path $BuildDir -Recurse -Force
 }
 New-Item -ItemType Directory -Path $BuildDir | Out-Null
 
 # ── 2. dotnet publish (Release, self-contained, x64) ─────────────────────────
-Write-Host ">> Starte dotnet publish..." -ForegroundColor Cyan
+Write-Host ">> Starting dotnet publish..." -ForegroundColor Cyan
 dotnet publish $ProjectFile `
     -c Release `
     -r win-x64 `
@@ -36,16 +36,16 @@ dotnet publish $ProjectFile `
     "-p:Version=$Version"
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "FEHLER: dotnet publish fehlgeschlagen (Exit-Code $LASTEXITCODE)." -ForegroundColor Red
+    Write-Host "ERROR: dotnet publish failed (exit code $LASTEXITCODE)." -ForegroundColor Red
     exit $LASTEXITCODE
 }
 
-# ── 3. Dateien in build-Ordner kopieren ──────────────────────────────────────
-Write-Host ">> Kopiere Dateien nach: $BuildDir" -ForegroundColor Cyan
+# ── 3. Copy files to build folder ─────────────────────────────────────────────
+Write-Host ">> Copying files to: $BuildDir" -ForegroundColor Cyan
 Copy-Item -Path "$PublishDir\*" -Destination $BuildDir -Recurse -Force
 
-# ── 4. Inno Setup – Installer bauen ──────────────────────────────────────────
-Write-Host ">> Suche Inno Setup Compiler (ISCC.exe)..." -ForegroundColor Cyan
+# ── 4. Build Inno Setup installer ─────────────────────────────────────────────
+Write-Host ">> Looking for Inno Setup Compiler (ISCC.exe)..." -ForegroundColor Cyan
 
 $IssFile  = Join-Path $ProjectRoot 'innosetup.iss'
 $IsssPaths = @(
@@ -58,21 +58,21 @@ $IsssPaths = @(
 $Iscc = $IsssPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 if (-not $Iscc) {
-    Write-Host "WARNUNG: ISCC.exe nicht gefunden - Installer wird übersprungen." -ForegroundColor Yellow
-    Write-Host "  -> Inno Setup installieren: https://jrsoftware.org/isdl.php" -ForegroundColor Yellow
+    Write-Host "WARNING: ISCC.exe was not found; installer creation will be skipped." -ForegroundColor Yellow
+    Write-Host "  -> Install Inno Setup: https://jrsoftware.org/isdl.php" -ForegroundColor Yellow
 }
 elseif (-not (Test-Path $IssFile)) {
-    Write-Host "WARNUNG: innosetup.iss nicht gefunden - Installer wird übersprungen." -ForegroundColor Yellow
+    Write-Host "WARNING: innosetup.iss was not found; installer creation will be skipped." -ForegroundColor Yellow
 }
 else {
-    Write-Host ">> Starte Inno Setup: $Iscc" -ForegroundColor Cyan
+    Write-Host ">> Starting Inno Setup: $Iscc" -ForegroundColor Cyan
     & $Iscc "/DMyAppVersion=$Version" $IssFile
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "FEHLER: Inno Setup fehlgeschlagen (Exit-Code $LASTEXITCODE)." -ForegroundColor Red
+        Write-Host "ERROR: Inno Setup failed (exit code $LASTEXITCODE)." -ForegroundColor Red
         exit $LASTEXITCODE
     }
 
-    # Setup-EXE ausgeben
+    # Print setup EXE details
     $SetupExe = Get-ChildItem -Path $ArtifactDir -Filter 'OneNoteBackupExporter_Setup_*.exe' |
                 Sort-Object LastWriteTime -Descending |
                 Select-Object -First 1
@@ -82,9 +82,9 @@ else {
     }
 }
 
-# ── 5. Fertig ─────────────────────────────────────────────────────────────────
+# ── 5. Complete ───────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "Fertig! Build liegt in: $BuildDir" -ForegroundColor Green
+Write-Host "Complete! Build output: $BuildDir" -ForegroundColor Green
 $exe = Join-Path $BuildDir 'OneNoteExporter.exe'
 if (Test-Path $exe) {
     $size = [math]::Round((Get-Item $exe).Length / 1MB, 1)
