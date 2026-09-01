@@ -73,9 +73,11 @@ dotnet publish -c Release -r win-x64 --self-contained true
 ### Export Process
 1. `OneNoteComWorker.CreateAsync()` starts the STA thread and creates `OneNoteService` there
 2. `GetNotebooksAsync()` retrieves all notebooks via `GetHierarchy()` XML parse on the worker
-3. `ExportNotebookAsync()` dispatches `OpenHierarchy()` and `Publish()` to the STA worker
-4. After `Publish()` returns, async file polling waits until size is stable for 10 seconds while the STA message pump stays responsive
-5. Timeout: 20 min for local notebooks, 30 min for cloud (SharePoint/OneDrive)
+3. `ExportNotebookAsync()` publishes to a unique same-directory staging file on the STA worker
+4. Recoverable COM/RPC failures get one bounded retry; disconnected COM objects are recreated and validated on the STA thread
+5. Async file polling waits until size is stable for 10 seconds while the STA message pump stays responsive
+6. A successful staging file atomically replaces the final export; previous good backups remain untouched on failure
+7. Timeout: 20 min for local notebooks, 30 min for cloud (SharePoint/OneDrive); polling timeouts are not retried
 
 ### Export Formats
 | UI value | PublishFormat | Extension |
@@ -98,8 +100,11 @@ dotnet publish -c Release -r win-x64 --self-contained true
 ### Known COM Errors
 | HResult | Cause | Action |
 |---|---|---|
-| `0x8004201A` | Password-protected sections or offline | Show message, suggest unlocking |
-| `0x800706BA` | RPC timeout (large notebook, PDF/XPS) | Suggest .onepkg format |
+| `0x8004201A` | Export file already exists | Report the target-file collision |
+| `0x8004201D` | Notebook is not fully synchronized | Ask the user to finish sync |
+| `0x80042023` | OneNote internal timeout | Report timeout; suggest .onepkg for large PDF/XPS jobs |
+| `0x80042030` | A modal OneNote dialog blocks COM | Ask the user to close the dialog |
+| `0x800706BA` | OneNote RPC server unavailable/disconnected | Reconnect once, then report actionable COM guidance |
 | `0x80070005` | Access denied | Check permissions |
 | `0x80042010` | Notebook not accessible | Open in OneNote first |
 
@@ -107,7 +112,7 @@ dotnet publish -c Release -r win-x64 --self-contained true
 
 ### Layout (3-row Grid)
 ```
-Row 0 (Auto):   Header – title (#0078d7) + version badge (dynamic color)
+Row 0 (Auto):   Header – title, OneNote status badge and About/version button
 Row 1 (*):      Notebook list (ScrollViewer + ItemsControl with CheckBoxes)
 Row 2 (Auto):   Export section (path, format dropdown, warning, buttons, status)
 ```

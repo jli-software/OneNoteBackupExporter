@@ -29,6 +29,8 @@ public class ExportResult
     public bool   Success      { get; set; }
     public string Message      { get; set; } = "";
     public string ExportedPath { get; set; } = "";
+    public int    AttemptCount { get; set; } = 1;
+    public bool   RecoveredAfterRetry { get; set; }
 }
 
 public class VersionInfo

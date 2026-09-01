@@ -485,7 +485,14 @@ public partial class MainWindow : Window
                 var result = await _service.ExportNotebookAsync(
                     nb.Id, destPath, format, progress, ct);
 
-                if (result.Success) { successCount++; messages.Add($"✓ {nb.Name}"); }
+                if (result.Success)
+                {
+                    successCount++;
+                    string retryNote = result.RecoveredAfterRetry
+                        ? " (recovered after COM retry)"
+                        : "";
+                    messages.Add($"✓ {nb.Name}{retryNote}");
+                }
                 else                { failCount++;    messages.Add($"✗ {nb.Name}: {result.Message}"); }
             }
             catch (OperationCanceledException)
@@ -520,7 +527,14 @@ public partial class MainWindow : Window
                 var result = await _service.ExportSectionAsync(
                     sec.Info, destPath, format, progress, ct);
 
-                if (result.Success) { successCount++; messages.Add($"✓ {nb.Name}  /  {sec.Name}"); }
+                if (result.Success)
+                {
+                    successCount++;
+                    string retryNote = result.RecoveredAfterRetry
+                        ? " (recovered after COM retry)"
+                        : "";
+                    messages.Add($"✓ {nb.Name}  /  {sec.Name}{retryNote}");
+                }
                 else                { failCount++;    messages.Add($"✗ {nb.Name}  /  {sec.Name}: {result.Message}"); }
             }
             catch (OperationCanceledException)

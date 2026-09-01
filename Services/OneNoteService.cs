@@ -6,7 +6,10 @@ using OneNoteExporter.Models;
 
 namespace OneNoteExporter.Services;
 
-internal sealed record PendingExport(string FullPath, bool IsCloud);
+internal sealed record PendingExport(
+    string StagingPath,
+    string FinalPath,
+    bool IsCloud);
 
 /// <summary>
 /// Synchronous OneNote COM API implementation owned by <see cref="OneNoteComWorker"/>.
@@ -81,6 +84,14 @@ internal sealed class OneNoteService : IDisposable
         return notebooks;
     }
 
+    public void ValidateConnection()
+    {
+        if (_oneNote == null)
+            throw new InvalidOperationException("OneNote is not initialized.");
+
+        _oneNote.GetHierarchy("", HierarchyScope.hsNotebooks, out _);
+    }
+
     /// <summary>
     /// Starts a notebook export and returns as soon as OneNote accepted the
     /// publish request. File completion is monitored outside the STA thread.
@@ -120,22 +131,91 @@ internal sealed class OneNoteService : IDisposable
         };
 
         var sanitizedName = string.Join("_", notebookName.Split(Path.GetInvalidFileNameChars()));
-        var fullPath      = Path.Combine(destinationPath, sanitizedName + fileExtension);
+        var finalPath     = Path.Combine(destinationPath, sanitizedName + fileExtension);
+        var stagingPath   = CreateStagingPath(destinationPath, sanitizedName, fileExtension);
 
         Directory.CreateDirectory(destinationPath);
+        CleanupStaleStagingFiles(
+            destinationPath, sanitizedName, fileExtension, DateTime.UtcNow.AddDays(-2));
 
         _oneNote.OpenHierarchy(notebookPath, "", out string openedId, CreateFileType.cftNone);
 
-        if (File.Exists(fullPath))
+        progress?.Report("OneNote is writing to a protected staging file...");
+
+        try
         {
-            progress?.Report("Removing previous export file...");
-            File.Delete(fullPath);
+            _oneNote.Publish(openedId, stagingPath, publishFormat, "");
+        }
+        catch
+        {
+            TryDeleteStagingFile(stagingPath);
+            throw;
         }
 
-        progress?.Report("OneNote is writing in the background...");
-        _oneNote.Publish(openedId, fullPath, publishFormat, "");
+        return new PendingExport(stagingPath, finalPath, isCloud);
+    }
 
-        return new PendingExport(fullPath, isCloud);
+    private static string CreateStagingPath(
+        string directory,
+        string sanitizedName,
+        string fileExtension)
+        => Path.Combine(
+            directory,
+            $".{sanitizedName}.{Guid.NewGuid():N}.partial{fileExtension}");
+
+    private static void TryDeleteStagingFile(string stagingPath)
+    {
+        try
+        {
+            if (File.Exists(stagingPath))
+                File.Delete(stagingPath);
+        }
+        catch (IOException)
+        {
+            // OneNote may still hold the file after a broken RPC call. A unique
+            // staging path keeps later attempts and the last good export safe.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Preserve the original export failure; cleanup can happen later.
+        }
+    }
+
+    private static void CleanupStaleStagingFiles(
+        string directory,
+        string sanitizedName,
+        string fileExtension,
+        DateTime olderThanUtc)
+    {
+        string searchPattern = $".{sanitizedName}.*.partial{fileExtension}";
+
+        try
+        {
+            foreach (string path in Directory.EnumerateFiles(directory, searchPattern))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(path) < olderThanUtc)
+                        File.Delete(path);
+                }
+                catch (IOException)
+                {
+                    // An active or locked OneNote write must never be disturbed.
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // Cleanup is best-effort and must not prevent an export.
+                }
+            }
+        }
+        catch (IOException)
+        {
+            // Directory enumeration is best-effort.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // The export itself will provide the actionable permission error.
+        }
     }
 
     /// <summary>
@@ -200,23 +280,29 @@ internal sealed class OneNoteService : IDisposable
         var sanitizedNb  = string.Join("_", section.NotebookName.Split(Path.GetInvalidFileNameChars()));
         var sanitizedSec = string.Join("_", section.Name.Split(Path.GetInvalidFileNameChars()));
         var notebookDir  = Path.Combine(destinationPath, sanitizedNb);
-        var fullPath     = Path.Combine(notebookDir, sanitizedSec + fileExtension);
+        var finalPath    = Path.Combine(notebookDir, sanitizedSec + fileExtension);
+        var stagingPath  = CreateStagingPath(notebookDir, sanitizedSec, fileExtension);
 
         Directory.CreateDirectory(notebookDir);
+        CleanupStaleStagingFiles(
+            notebookDir, sanitizedSec, fileExtension, DateTime.UtcNow.AddDays(-2));
 
         progress?.Report("Opening parent notebook...");
         _oneNote.OpenHierarchy(section.NotebookPath, "", out _, CreateFileType.cftNone);
 
-        if (File.Exists(fullPath))
+        progress?.Report("OneNote is writing to a protected staging file...");
+
+        try
         {
-            progress?.Report("Removing previous export file...");
-            File.Delete(fullPath);
+            _oneNote.Publish(section.Id, stagingPath, publishFormat, "");
+        }
+        catch
+        {
+            TryDeleteStagingFile(stagingPath);
+            throw;
         }
 
-        progress?.Report("OneNote is writing in the background...");
-        _oneNote.Publish(section.Id, fullPath, publishFormat, "");
-
-        return new PendingExport(fullPath, section.IsCloud);
+        return new PendingExport(stagingPath, finalPath, section.IsCloud);
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -305,14 +391,87 @@ internal sealed class OneNoteService : IDisposable
         };
     }
 
-    internal static ExportResult CreateExportFailure(Exception exception)
+    internal static ExportResult FinalizeExport(
+        PendingExport pending,
+        ExportResult result)
     {
+        File.Move(pending.StagingPath, pending.FinalPath, overwrite: true);
+        result.ExportedPath = pending.FinalPath;
+        return result;
+    }
+
+    internal static bool IsRecoverableComFailure(Exception exception)
+        => exception is COMException ex && ex.HResult is
+            unchecked((int)0x800706BA) or // RPC_S_SERVER_UNAVAILABLE
+            unchecked((int)0x80010108) or // RPC_E_DISCONNECTED
+            unchecked((int)0x800401FD) or // CO_E_OBJNOTCONNECTED
+            unchecked((int)0x8001010A) or // RPC_E_SERVERCALL_RETRYLATER
+            unchecked((int)0x80010001);   // RPC_E_CALL_REJECTED
+
+    internal static bool RequiresComConnectionReset(Exception exception)
+        => exception is COMException ex && ex.HResult is
+            unchecked((int)0x800706BA) or
+            unchecked((int)0x80010108) or
+            unchecked((int)0x800401FD);
+
+    internal static string DescribeComFailure(Exception exception)
+    {
+        if (exception is not COMException ex)
+            return exception.Message;
+
+        return ex.HResult switch
+        {
+            unchecked((int)0x800706BA) => "RPC connection lost (0x800706BA)",
+            unchecked((int)0x80010108) => "COM object disconnected (0x80010108)",
+            unchecked((int)0x800401FD) => "COM object is no longer connected (0x800401FD)",
+            unchecked((int)0x80010007) => "OneNote COM server stopped (0x80010007)",
+            unchecked((int)0x80010012) => "OneNote COM server unavailable (0x80010012)",
+            unchecked((int)0x80042023) => "OneNote internal timeout (0x80042023)",
+            unchecked((int)0x8001010A) => "OneNote is busy (0x8001010A)",
+            unchecked((int)0x80010001) => "OneNote rejected the COM call (0x80010001)",
+            _ => $"COM error 0x{ex.HResult:X8}"
+        };
+    }
+
+    internal static ExportResult CreateConnectionRecoveryFailure(
+        Exception originalException,
+        Exception recoveryException)
+        => new()
+        {
+            Success = false,
+            Message = $"OneNote communication failed: " +
+                      $"{DescribeComFailure(originalException)}. " +
+                      "The app tried to reconnect automatically, but OneNote Desktop " +
+                      $"could not be initialized again: {recoveryException.Message} " +
+                      "Open OneNote, wait until synchronization has finished, and retry. " +
+                      "The existing backup was not changed."
+        };
+
+    internal static ExportResult CreateExportFailure(
+        Exception exception,
+        int attemptCount,
+        string exportFormat,
+        bool connectionRecoveryAttempted)
+    {
+        string attemptSuffix = attemptCount > 1
+            ? $" after {attemptCount} attempts"
+            : "";
+        bool isRenderedFormat = exportFormat.Equals("pdf", StringComparison.OrdinalIgnoreCase) ||
+                                exportFormat.Equals("xps", StringComparison.OrdinalIgnoreCase);
+        string renderedFormatAdvice = isRenderedFormat
+            ? " OneNote's PDF/XPS renderer is less reliable for large notebooks; " +
+              "try .onepkg if the problem continues."
+            : "";
+        string recoveryDetails = connectionRecoveryAttempted
+            ? " The app reconnected to OneNote automatically, but the connection failed again."
+            : "";
+
         return exception switch
         {
             UnauthorizedAccessException ex => new ExportResult
             {
                 Success = false,
-                Message = $"Access denied: {ex.Message}"
+                Message = $"Access denied: {ex.Message} The existing backup was not changed."
             },
             COMException ex when ex.HResult == unchecked((int)0x8004201A) => new ExportResult
             {
@@ -322,8 +481,40 @@ internal sealed class OneNoteService : IDisposable
             COMException ex when ex.HResult == unchecked((int)0x800706BA) => new ExportResult
             {
                 Success = false,
-                Message = "OneNote RPC timeout (0x800706BA). " +
-                          "Large notebooks may fail with PDF/XPS. Try .onepkg format instead."
+                Message = $"OneNote COM/RPC connection lost (0x800706BA){attemptSuffix}." +
+                          recoveryDetails +
+                          " This is a OneNote Desktop communication failure, not a " +
+                          "destination-folder error. Open OneNote, wait until the notebook " +
+                          "is fully synchronized, and retry." + renderedFormatAdvice
+                          + " The existing backup was not changed."
+            },
+            COMException ex when ex.HResult == unchecked((int)0x80042023) => new ExportResult
+            {
+                Success = false,
+                Message = $"OneNote internal timeout (0x80042023){attemptSuffix}. " +
+                          "OneNote did not finish the export request in time." +
+                          renderedFormatAdvice
+            },
+            COMException ex when ex.HResult == unchecked((int)0x8004201D) => new ExportResult
+            {
+                Success = false,
+                Message = "OneNote reports that the notebook is not fully synchronized " +
+                          "(0x8004201D). Open it in OneNote, wait for synchronization, " +
+                          "and retry."
+            },
+            COMException ex when ex.HResult == unchecked((int)0x80042030) => new ExportResult
+            {
+                Success = false,
+                Message = "A modal OneNote dialog is blocking the export (0x80042030). " +
+                          "Close the dialog in OneNote and retry."
+            },
+            COMException ex when IsRecoverableComFailure(ex) => new ExportResult
+            {
+                Success = false,
+                Message = $"OneNote communication failed: {DescribeComFailure(ex)}" +
+                          $"{attemptSuffix}." + recoveryDetails +
+                          " Open OneNote and retry after it is responsive and synchronized." +
+                          renderedFormatAdvice
             },
             COMException ex => new ExportResult
             {
@@ -333,7 +524,8 @@ internal sealed class OneNoteService : IDisposable
             _ => new ExportResult
             {
                 Success = false,
-                Message = $"Error during export: {exception.Message}"
+                Message = $"Error during export: {exception.Message} " +
+                          "The existing backup was not changed."
             }
         };
     }
