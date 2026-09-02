@@ -444,7 +444,6 @@ public partial class MainWindow : Window
 
         var warningWindow = new RenderedExportWarningWindow(
             format,
-            notebookJobs.Count,
             sectionJobs.Count > 0)
         {
             Owner = this
