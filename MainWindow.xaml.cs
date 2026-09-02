@@ -533,7 +533,7 @@ public partial class MainWindow : Window
         try
         {
             if (format == "localbackup")
-                await RunLocalBackupAsync(destPath);
+                await RunLocalBackupAsync(destPath, _exportCts.Token);
             else
             {
                 var prepared = await ApplyRenderedExportGuardAsync(
@@ -565,8 +565,13 @@ public partial class MainWindow : Window
     {
         if (!_exportInProgress) return;
 
+        string cancellationDetails = _isLocalBackupMode
+            ? "The export will stop safely after the current file copy finishes."
+            : "The export will stop safely without closing OneNote. If OneNote is currently " +
+              "rendering, cancellation completes as soon as OneNote returns control.";
+
         var confirm = MessageBox.Show(
-            "Do you really want to cancel the export?\n\nThe current export will stop without closing OneNote.",
+            $"Do you really want to cancel the export?\n\n{cancellationDetails}",
             "Cancel Export",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
@@ -580,13 +585,13 @@ public partial class MainWindow : Window
 
     // ── Export implementations ───────────────────────────────────────────────
 
-    private async Task RunLocalBackupAsync(string destPath)
+    private async Task RunLocalBackupAsync(string destPath, CancellationToken ct)
     {
         ShowProgress("Copying local backup files...");
 
         try
         {
-            var result = await Task.Run(() => FileHelper.CopyLocalBackup(destPath));
+            var result = await Task.Run(() => FileHelper.CopyLocalBackup(destPath, ct), ct);
             HideProgress();
 
             if (result.Success)
@@ -598,6 +603,10 @@ public partial class MainWindow : Window
             {
                 ShowStatus($"❌ Export failed: {result.Message}", StatusKind.Error);
             }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

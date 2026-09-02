@@ -3,9 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Icon="icon.ico"
         Title="Large PDF/XPS export"
-        Width="560" Height="430"
-        MinWidth="520" MinHeight="410"
-        ResizeMode="NoResize"
+        Width="700" Height="555"
+        MinWidth="620" MinHeight="520"
+        ResizeMode="CanResizeWithGrip"
         ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource BgPage}">
@@ -29,6 +29,7 @@
                        x:Name="TitleText"
                        FontSize="18"
                        FontWeight="Bold"
+                       TextWrapping="Wrap"
                        Foreground="{StaticResource PrimaryBlue}"/>
 
             <TextBlock Grid.Row="1"
@@ -51,42 +52,54 @@
                            Foreground="{StaticResource WarningFg}"/>
             </Border>
 
-            <StackPanel Grid.Row="3" Margin="0,16,0,0">
-                <Button x:Name="SectionsButton"
-                        Style="{StaticResource PrimaryButtonStyle}"
-                        IsDefault="True"
-                        HorizontalContentAlignment="Left"
-                        Padding="14,10"
-                        Click="SectionsButton_Click">
-                    <StackPanel>
-                        <TextBlock Text="Recommended: Export as individual sections"
-                                   FontWeight="SemiBold"/>
-                        <TextBlock x:Name="SectionsDescriptionText"
-                                   Margin="0,3,0,0"
-                                   FontSize="11"
-                                   FontWeight="Normal"
+            <ScrollViewer Grid.Row="3"
+                          Margin="0,16,0,0"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <Button x:Name="SectionsButton"
+                            Style="{StaticResource PrimaryButtonStyle}"
+                            IsDefault="True"
+                            HorizontalContentAlignment="Left"
+                            Padding="14,10"
+                            Click="SectionsButton_Click">
+                        <StackPanel>
+                            <TextBlock Text="Recommended: Export as individual sections"
+                                       FontWeight="SemiBold"/>
+                            <TextBlock x:Name="SectionsDescriptionText"
+                                       Margin="0,3,0,0"
+                                       FontSize="11"
+                                       FontWeight="Normal"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Button x:Name="OneNotePackageButton"
+                            Style="{StaticResource GrayButtonStyle}"
+                            Margin="0,8,0,0"
+                            HorizontalContentAlignment="Left"
+                            Padding="14,9"
+                            Click="OneNotePackageButton_Click">
+                        <TextBlock x:Name="OneNotePackageButtonText"
+                                   Text="Create a complete OneNote package (.onepkg) instead"
                                    TextWrapping="Wrap"/>
-                    </StackPanel>
-                </Button>
+                    </Button>
 
-                <Button x:Name="OneNotePackageButton"
-                        Content="Create a complete OneNote package (.onepkg) instead"
-                        Style="{StaticResource GrayButtonStyle}"
-                        Margin="0,8,0,0"
-                        HorizontalContentAlignment="Left"
-                        Padding="14,9"
-                        Click="OneNotePackageButton_Click"/>
-
-                <Button x:Name="WholeNotebookButton"
-                        Margin="0,8,0,0"
-                        HorizontalAlignment="Left"
-                        Padding="0"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Foreground="{StaticResource TextSecondary}"
-                        Cursor="Hand"
-                        Click="WholeNotebookButton_Click"/>
-            </StackPanel>
+                    <Button x:Name="WholeNotebookButton"
+                            Margin="0,8,0,0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Foreground="{StaticResource TextSecondary}"
+                            Cursor="Hand"
+                            Click="WholeNotebookButton_Click">
+                        <TextBlock x:Name="WholeNotebookButtonText"
+                                   TextWrapping="Wrap"/>
+                    </Button>
+                </StackPanel>
+            </ScrollViewer>
 
             <Button Grid.Row="4"
                     Content="Cancel"

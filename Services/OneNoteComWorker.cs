@@ -120,6 +120,7 @@ public sealed class OneNoteComWorker : IDisposable
                 }
 
                 progress?.Report("Finalizing export and replacing the previous backup...");
+                ct.ThrowIfCancellationRequested();
                 var finalResult = OneNoteService.FinalizeExport(pending, result);
                 finalResult.AttemptCount = attempt;
                 finalResult.RecoveredAfterRetry = attempt > 1;
