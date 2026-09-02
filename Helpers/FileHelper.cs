@@ -91,7 +91,9 @@ public static class FileHelper
     /// <summary>
     /// Copies the entire OneNote local backup folder to <paramref name="destPath"/>.
     /// </summary>
-    public static ExportResult CopyLocalBackup(string destPath)
+    public static ExportResult CopyLocalBackup(
+        string destPath,
+        CancellationToken ct = default)
     {
         var backupPath = GetOneNoteBackupPath();
 
@@ -100,9 +102,14 @@ public static class FileHelper
 
         try
         {
+            ct.ThrowIfCancellationRequested();
             Directory.CreateDirectory(destPath);
-            CopyDirectory(backupPath, destPath);
+            CopyDirectory(backupPath, destPath, ct);
             return new ExportResult { Success = true, Message = "Local backup copied successfully.", ExportedPath = destPath };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -137,20 +144,24 @@ public static class FileHelper
 
     // ── private helpers ──────────────────────────────────────────────────────
 
-    private static void CopyDirectory(string src, string dst)
+    private static void CopyDirectory(string src, string dst, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         Directory.CreateDirectory(dst);
 
         foreach (var file in Directory.GetFiles(src))
         {
+            ct.ThrowIfCancellationRequested();
             var dest = Path.Combine(dst, Path.GetFileName(file));
             File.Copy(file, dest, overwrite: true);
+            ct.ThrowIfCancellationRequested();
         }
 
         foreach (var dir in Directory.GetDirectories(src))
         {
+            ct.ThrowIfCancellationRequested();
             var dest = Path.Combine(dst, Path.GetFileName(dir));
-            CopyDirectory(dir, dest);
+            CopyDirectory(dir, dest, ct);
         }
     }
 }

@@ -36,13 +36,13 @@ public partial class RenderedExportWarningWindow : Window
             $"The app loads all exportable sections automatically and creates one {formatName} " +
             "file per section. Locked sections are not included. " +
             "Smaller render jobs are significantly more reliable.";
-        WholeNotebookButton.Content =
+        WholeNotebookButtonText.Text =
             $"Try the whole {formatName} export anyway (may fail for large notebooks)";
 
         if (hasSelectedSections)
         {
             OneNotePackageButton.IsEnabled = false;
-            OneNotePackageButton.Content =
+            OneNotePackageButtonText.Text =
                 "OneNote package requires no individually selected sections";
             OneNotePackageButton.ToolTip =
                 "Cancel, deselect the individual sections, and try again to create a complete package.";

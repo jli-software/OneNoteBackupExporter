@@ -7,7 +7,7 @@
 A Windows desktop application to export OneNote notebooks to portable formats.  
 Talks directly to OneNote Desktop via the COM API.
 
-![version](https://img.shields.io/badge/version-1.2.0-blueviolet?style=flat-square)
+![version](https://img.shields.io/badge/version-1.2.1-blueviolet?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D7?style=flat-square&logo=windows&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square)
 ![built with](https://img.shields.io/badge/built%20with-.NET%2010%20%2F%20WPF-512BD4?style=flat-square&logo=dotnet&logoColor=white)
@@ -40,7 +40,7 @@ checksum are available as workflow artifacts for 14 days.
 To publish a release:
 
 1. Update `<Version>` in `OneNoteExporter.csproj` and commit the change.
-2. Create and push a matching tag, for example `v1.2.0`.
+2. Create and push a matching tag, for example `v1.2.1`.
 3. GitHub Actions builds the installer, creates the GitHub release with generated notes, and
    uploads the installer plus checksum automatically.
 
