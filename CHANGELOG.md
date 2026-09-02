@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.2
+
+- Simplified the large PDF/XPS export choice to one short explanation and three clear actions.
+- Made the whole-notebook option a full-size neutral button and removed persuasive wording.
+
 ## 1.2.1
 
 - Enlarged the large PDF/XPS export dialog so every export option is fully visible.

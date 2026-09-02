@@ -16,7 +16,6 @@ public partial class RenderedExportWarningWindow : Window
 
     public RenderedExportWarningWindow(
         string exportFormat,
-        int notebookCount,
         bool hasSelectedSections)
     {
         InitializeComponent();
@@ -24,28 +23,19 @@ public partial class RenderedExportWarningWindow : Window
         string formatName = exportFormat.Equals("pdf", StringComparison.OrdinalIgnoreCase)
             ? "PDF"
             : "XPS";
-        string notebookLabel = notebookCount == 1
-            ? "the selected notebook"
-            : $"the {notebookCount} selected notebooks";
-
-        TitleText.Text = $"Whole-notebook {formatName} exports can fail when they are large";
+        TitleText.Text = $"Large {formatName} exports may fail";
         ExplanationText.Text =
-            $"OneNote Desktop must render {notebookLabel} through its own {formatName} engine. " +
-            "For large notebooks this engine can time out or disconnect from the app.";
-        SectionsDescriptionText.Text =
-            $"The app loads all exportable sections automatically and creates one {formatName} " +
-            "file per section. Locked sections are not included. " +
-            "Smaller render jobs are significantly more reliable.";
+            "This is a limitation of OneNote's export engine. Choose how you want to export:";
         WholeNotebookButtonText.Text =
-            $"Try the whole {formatName} export anyway (may fail for large notebooks)";
+            $"Export the whole notebook as one {formatName} file";
 
         if (hasSelectedSections)
         {
             OneNotePackageButton.IsEnabled = false;
             OneNotePackageButtonText.Text =
-                "OneNote package requires no individually selected sections";
+                "OneNote package unavailable with selected sections";
             OneNotePackageButton.ToolTip =
-                "Cancel, deselect the individual sections, and try again to create a complete package.";
+                "Available when whole notebooks are selected.";
         }
     }
 

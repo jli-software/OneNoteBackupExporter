@@ -1,6 +1,6 @@
 #define MyAppName      "OneNoteBackupExporter"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.1"
+  #define MyAppVersion "1.2.2"
 #endif
 #define MyAppPublisher "JLI Software"
 #define MyAppURL       "https://github.com/jli-software/OneNoteBackupExporter"
