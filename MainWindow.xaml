@@ -328,6 +328,9 @@
                         <ComboBoxItem Tag="pdf">
                             PDF Document (.pdf) – Universal, lower quality
                         </ComboBoxItem>
+                        <ComboBoxItem Tag="html">
+                            HTML Web Pages – Browser-readable folder with index
+                        </ComboBoxItem>
                         <ComboBoxItem x:Name="LocalBackupItem" Tag="localbackup">
                             Local Backup Copy – Fast, direct file copy
                         </ComboBoxItem>

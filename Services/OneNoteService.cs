@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -13,6 +14,26 @@ internal sealed record PendingExport(
     string StagingPath,
     string FinalPath,
     bool IsCloud);
+
+internal sealed record HtmlPageExport(
+    string Id,
+    string Name,
+    string SectionPath,
+    string RelativeDirectory,
+    string TargetPath);
+
+internal sealed record HtmlExportPlan(
+    string Title,
+    string StagingDirectory,
+    string FinalDirectory,
+    string CollectionDirectory,
+    string CollectionTitle,
+    bool IsCloud,
+    IReadOnlyList<HtmlPageExport> Pages);
+
+internal sealed record ExportFormatInfo(
+    string Extension,
+    PublishFormat PublishFormat);
 
 /// <summary>
 /// Synchronous OneNote COM API implementation owned by <see cref="OneNoteComWorker"/>.
@@ -119,19 +140,9 @@ internal sealed class OneNoteService : IDisposable
 
         progress?.Report($"Exporting: {notebookName} (format: {exportFormat})");
 
-        string fileExtension = exportFormat.ToLowerInvariant() switch
-        {
-            "xps" => ".xps",
-            "pdf" => ".pdf",
-            _     => ".onepkg"
-        };
-
-        PublishFormat publishFormat = exportFormat.ToLowerInvariant() switch
-        {
-            "xps" => PublishFormat.pfXPS,
-            "pdf" => PublishFormat.pfPDF,
-            _     => PublishFormat.pfOneNotePackage
-        };
+        ExportFormatInfo formatInfo = ResolveSingleFileFormat(exportFormat);
+        string fileExtension = formatInfo.Extension;
+        PublishFormat publishFormat = formatInfo.PublishFormat;
 
         var sanitizedName = string.Join("_", notebookName.Split(Path.GetInvalidFileNameChars()));
         var finalPath     = Path.Combine(destinationPath, sanitizedName + fileExtension);
@@ -221,6 +232,98 @@ internal sealed class OneNoteService : IDisposable
         }
     }
 
+    private static void RecoverInterruptedHtmlSwap(
+        string parentDirectory,
+        string finalName,
+        string finalDirectory)
+    {
+        string pattern = $".{finalName}.*.previous";
+
+        try
+        {
+            var previousDirectories = Directory
+                .EnumerateDirectories(parentDirectory, pattern)
+                .OrderByDescending(Directory.GetLastWriteTimeUtc)
+                .ToList();
+
+            if (!Directory.Exists(finalDirectory) && previousDirectories.Count > 0)
+            {
+                Directory.Move(previousDirectories[0], finalDirectory);
+                previousDirectories.RemoveAt(0);
+            }
+
+            if (Directory.Exists(finalDirectory))
+            {
+                foreach (string previousDirectory in previousDirectories)
+                    TryDeleteDirectory(previousDirectory);
+            }
+        }
+        catch (IOException)
+        {
+            // Recovery is best-effort; finalization will report any real collision.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // The export itself will provide the actionable permission error.
+        }
+    }
+
+    private static void CleanupStaleHtmlDirectories(
+        string parentDirectory,
+        string finalName,
+        DateTime olderThanUtc)
+    {
+        foreach (string suffix in new[] { "partial", "previous" })
+        {
+            string pattern = $".{finalName}.*.{suffix}";
+
+            try
+            {
+                foreach (string directory in Directory.EnumerateDirectories(parentDirectory, pattern))
+                {
+                    try
+                    {
+                        if (Directory.GetLastWriteTimeUtc(directory) < olderThanUtc)
+                            Directory.Delete(directory, recursive: true);
+                    }
+                    catch (IOException)
+                    {
+                        // Active or locked output must never be disturbed.
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        // Cleanup is best-effort and must not prevent an export.
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                // Directory enumeration is best-effort.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // The export itself will provide the actionable permission error.
+            }
+        }
+    }
+
+    private static void TryDeleteDirectory(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+        catch (IOException)
+        {
+            // A later export can clean up the retained transaction directory.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // A later export can clean up the retained transaction directory.
+        }
+    }
+
     /// <summary>
     /// Returns all exportable sections in a notebook (including those inside section groups).
     /// Skips encrypted and recycle-bin entries. Called by OneNoteComWorker on its STA thread.
@@ -246,7 +349,8 @@ internal sealed class OneNoteService : IDisposable
         var ns   = xdoc.Root?.Name.Namespace;
         if (ns == null) return sections;
 
-        CollectSections(xdoc.Root!, ns, notebookId, nbName, nbPath, isCloud, "", sections);
+        CollectSections(
+            xdoc.Root!, ns, notebookId, nbName, nbPath, isCloud, "", "", sections);
         AssignCollisionSafeExportFileStems(sections);
         return sections;
     }
@@ -266,19 +370,9 @@ internal sealed class OneNoteService : IDisposable
 
         progress?.Report($"Exporting section: {section.Name} (format: {exportFormat})");
 
-        string fileExtension = exportFormat.ToLowerInvariant() switch
-        {
-            "xps" => ".xps",
-            "pdf" => ".pdf",
-            _     => ".onepkg"
-        };
-
-        PublishFormat publishFormat = exportFormat.ToLowerInvariant() switch
-        {
-            "xps" => PublishFormat.pfXPS,
-            "pdf" => PublishFormat.pfPDF,
-            _     => PublishFormat.pfOneNotePackage
-        };
+        ExportFormatInfo formatInfo = ResolveSingleFileFormat(exportFormat);
+        string fileExtension = formatInfo.Extension;
+        PublishFormat publishFormat = formatInfo.PublishFormat;
 
         // Preserve section-group folders and use the collision-safe stem assigned
         // while loading the full hierarchy, so split exports never overwrite peers.
@@ -313,6 +407,234 @@ internal sealed class OneNoteService : IDisposable
         return new PendingExport(stagingPath, finalPath, section.IsCloud);
     }
 
+    public HtmlExportPlan BeginNotebookHtmlExport(
+        string notebookId,
+        string destinationPath,
+        IProgress<string>? progress = null)
+    {
+        if (_oneNote == null)
+            throw new InvalidOperationException("OneNote is not initialized.");
+
+        _oneNote.GetHierarchy(notebookId, HierarchyScope.hsPages, out string xml);
+        var document = XDocument.Parse(xml);
+        var ns = document.Root?.Name.Namespace
+            ?? throw new InvalidOperationException("OneNote returned an empty hierarchy.");
+        var notebook = document.Root!
+            .DescendantsAndSelf(ns + "Notebook")
+            .FirstOrDefault(element => element.Attribute("ID")?.Value == notebookId)
+            ?? document.Root!.DescendantsAndSelf(ns + "Notebook").FirstOrDefault()
+            ?? throw new InvalidOperationException("The selected notebook could not be found.");
+
+        string notebookName = notebook.Attribute("name")?.Value ?? "Notebook";
+        string notebookPath = notebook.Attribute("path")?.Value ?? "";
+        bool isCloud = IsCloudPath(notebookPath);
+        string notebookStem =
+            $"{SanitizeHtmlPathSegment(notebookName, "Notebook")}" +
+            $"__{CreateStableSuffix(notebookId)}";
+        string finalDirectory = Path.Combine(
+            destinationPath, $"{notebookStem}_html");
+        string stagingDirectory = PrepareHtmlStagingDirectory(finalDirectory);
+
+        progress?.Report($"Preparing browser-readable HTML pages for {notebookName}...");
+        var pages = CollectNotebookHtmlPages(notebook, ns, stagingDirectory);
+        if (pages.Count == 0)
+            throw new InvalidOperationException("The notebook does not contain exportable pages.");
+
+        return new HtmlExportPlan(
+            notebookName,
+            stagingDirectory,
+            finalDirectory,
+            finalDirectory,
+            notebookName,
+            isCloud,
+            pages);
+    }
+
+    public HtmlExportPlan BeginSectionHtmlExport(
+        SectionInfo section,
+        string destinationPath,
+        IProgress<string>? progress = null)
+    {
+        if (_oneNote == null)
+            throw new InvalidOperationException("OneNote is not initialized.");
+
+        _oneNote.GetHierarchy(section.Id, HierarchyScope.hsPages, out string xml);
+        var document = XDocument.Parse(xml);
+        var ns = document.Root?.Name.Namespace
+            ?? throw new InvalidOperationException("OneNote returned an empty hierarchy.");
+        var sectionElement = document.Root!
+            .DescendantsAndSelf(ns + "Section")
+            .FirstOrDefault(element => element.Attribute("ID")?.Value == section.Id)
+            ?? document.Root!.DescendantsAndSelf(ns + "Section").FirstOrDefault()
+            ?? throw new InvalidOperationException("The selected section could not be found.");
+
+        string notebookStem =
+            $"{SanitizeHtmlPathSegment(section.NotebookName, "Notebook")}" +
+            $"__{CreateStableSuffix(section.NotebookId)}";
+        string notebookRoot = Path.Combine(destinationPath, $"{notebookStem}_html");
+        string sectionParent = BuildHtmlGroupDirectory(
+            notebookRoot, section.GroupName, section.GroupExportPath);
+        string sectionStem = $"{SanitizeHtmlPathSegment(section.Name, "Section")}" +
+                             $"__{CreateStableSuffix(section.Id)}";
+        string finalDirectory = Path.Combine(sectionParent, sectionStem);
+        string stagingDirectory = PrepareHtmlStagingDirectory(finalDirectory);
+
+        progress?.Report($"Preparing browser-readable HTML pages for {section.Name}...");
+        var pages = CollectSectionHtmlPages(
+            sectionElement, ns, stagingDirectory, "", section.Name);
+        if (pages.Count == 0)
+            throw new InvalidOperationException("The section does not contain exportable pages.");
+
+        return new HtmlExportPlan(
+            section.Name,
+            stagingDirectory,
+            finalDirectory,
+            notebookRoot,
+            section.NotebookName,
+            section.IsCloud,
+            pages);
+    }
+
+    public PendingExport BeginHtmlPageExport(
+        HtmlExportPlan plan,
+        HtmlPageExport page,
+        IProgress<string>? progress = null)
+    {
+        if (_oneNote == null)
+            throw new InvalidOperationException("OneNote is not initialized.");
+
+        string pageDirectory = Path.GetDirectoryName(page.TargetPath)
+            ?? throw new InvalidOperationException("The HTML page path is invalid.");
+        Directory.CreateDirectory(pageDirectory);
+        progress?.Report($"Publishing HTML page: {page.Name}");
+        _oneNote.Publish(page.Id, page.TargetPath, PublishFormat.pfHTML, "");
+
+        return new PendingExport(page.TargetPath, page.TargetPath, plan.IsCloud);
+    }
+
+    private static List<HtmlPageExport> CollectNotebookHtmlPages(
+        XElement notebook,
+        XNamespace ns,
+        string stagingDirectory)
+    {
+        var pages = new List<HtmlPageExport>();
+        var usedSectionPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        Walk(notebook, "", "");
+        return pages;
+
+        void Walk(XElement parent, string relativeGroupPath, string displayGroupPath)
+        {
+            foreach (var child in parent.Elements())
+            {
+                if (child.Name == ns + "SectionGroup")
+                {
+                    if (child.Attribute("isRecycleBin")?.Value == "true") continue;
+
+                    string groupName = child.Attribute("name")?.Value ?? "Group";
+                    string groupId = child.Attribute("ID")?.Value ??
+                                     $"{displayGroupPath}/{groupName}";
+                    string sanitizedGroup =
+                        $"{SanitizeHtmlPathSegment(groupName, "Group")}" +
+                        $"__{CreateStableSuffix(groupId)}";
+                    Walk(
+                        child,
+                        Path.Combine(relativeGroupPath, sanitizedGroup),
+                        string.IsNullOrEmpty(displayGroupPath)
+                            ? groupName
+                            : $"{displayGroupPath} / {groupName}");
+                }
+                else if (child.Name == ns + "Section")
+                {
+                    if (child.Attribute("encrypted")?.Value == "true") continue;
+
+                    string sectionName = child.Attribute("name")?.Value ?? "Section";
+                    string sectionId = child.Attribute("ID")?.Value ?? sectionName;
+                    string sectionStem =
+                        $"{SanitizeHtmlPathSegment(sectionName, "Section")}" +
+                        $"__{CreateStableSuffix(sectionId)}";
+                    string sectionPath = Path.Combine(
+                        relativeGroupPath,
+                        sectionStem);
+                    sectionPath = MakeCollisionSafePath(
+                        sectionPath, sectionId, usedSectionPaths);
+                    string displayPath = string.IsNullOrEmpty(displayGroupPath)
+                        ? sectionName
+                        : $"{displayGroupPath} / {sectionName}";
+                    pages.AddRange(CollectSectionHtmlPages(
+                        child, ns, stagingDirectory, sectionPath, displayPath));
+                }
+            }
+        }
+    }
+
+    private static List<HtmlPageExport> CollectSectionHtmlPages(
+        XElement section,
+        XNamespace ns,
+        string stagingDirectory,
+        string sectionRelativePath,
+        string sectionDisplayPath)
+    {
+        var pages = new List<HtmlPageExport>();
+        var usedPagePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var page in section.Elements(ns + "Page"))
+        {
+            string pageId = page.Attribute("ID")?.Value ?? "";
+            if (string.IsNullOrEmpty(pageId)) continue;
+
+            string pageName = page.Attribute("name")?.Value ?? "Untitled Page";
+            string relativeDirectory = Path.Combine(
+                sectionRelativePath,
+                SanitizeHtmlPathSegment(pageName, "Untitled Page"));
+            relativeDirectory = MakeCollisionSafePath(
+                relativeDirectory, pageId, usedPagePaths);
+            string targetPath = Path.Combine(
+                stagingDirectory, relativeDirectory, "index.htm");
+
+            pages.Add(new HtmlPageExport(
+                pageId, pageName, sectionDisplayPath, relativeDirectory, targetPath));
+        }
+
+        return pages;
+    }
+
+    private static string MakeCollisionSafePath(
+        string preferredPath,
+        string stableId,
+        HashSet<string> usedPaths)
+    {
+        if (usedPaths.Add(preferredPath)) return preferredPath;
+
+        string candidate = $"{preferredPath}__{CreateStableSuffix(stableId)}";
+        int collisionIndex = 2;
+        while (!usedPaths.Add(candidate))
+            candidate = $"{preferredPath}__{CreateStableSuffix(stableId)}_{collisionIndex++}";
+        return candidate;
+    }
+
+    private static string CreateStableSuffix(string value)
+    {
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(hash.AsSpan(0, 4)).ToLowerInvariant();
+    }
+
+    private static string PrepareHtmlStagingDirectory(string finalDirectory)
+    {
+        string parentDirectory = Path.GetDirectoryName(finalDirectory)
+            ?? throw new InvalidOperationException("The HTML destination path is invalid.");
+        string finalName = Path.GetFileName(finalDirectory);
+        Directory.CreateDirectory(parentDirectory);
+        RecoverInterruptedHtmlSwap(parentDirectory, finalName, finalDirectory);
+        CleanupStaleHtmlDirectories(
+            parentDirectory, finalName, DateTime.UtcNow.AddDays(-2));
+
+        string stagingDirectory = Path.Combine(
+            parentDirectory, $".{finalName}.{Guid.NewGuid():N}.partial");
+        Directory.CreateDirectory(stagingDirectory);
+        return stagingDirectory;
+    }
+
     private static string BuildSectionDirectory(string notebookDirectory, string groupName)
     {
         string currentDirectory = notebookDirectory;
@@ -323,6 +645,27 @@ internal sealed class OneNoteService : IDisposable
             string sanitizedGroup = string.Join(
                 "_", groupPart.Split(Path.GetInvalidFileNameChars()));
             currentDirectory = Path.Combine(currentDirectory, sanitizedGroup);
+        }
+
+        return currentDirectory;
+    }
+
+    private static string BuildHtmlGroupDirectory(
+        string notebookDirectory,
+        string groupName,
+        string groupExportPath)
+    {
+        string currentDirectory = notebookDirectory;
+
+        if (!string.IsNullOrWhiteSpace(groupExportPath))
+            return Path.Combine(currentDirectory, groupExportPath);
+
+        foreach (string groupPart in groupName.Split(
+                     " / ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            currentDirectory = Path.Combine(
+                currentDirectory,
+                SanitizeHtmlPathSegment(groupPart, "Group"));
         }
 
         return currentDirectory;
@@ -361,6 +704,45 @@ internal sealed class OneNoteService : IDisposable
 
     private static string SanitizeFileName(string name)
         => string.Join("_", name.Split(Path.GetInvalidFileNameChars()));
+
+    private static string SanitizeHtmlPathSegment(string name, string fallback)
+    {
+        const int maxLength = 80;
+        string sanitized = SanitizeFileName(name).Trim().TrimEnd('.');
+        if (string.IsNullOrWhiteSpace(sanitized))
+            sanitized = fallback;
+
+        string deviceName = sanitized.Split('.')[0];
+        bool isReservedDeviceName = deviceName.Equals("CON", StringComparison.OrdinalIgnoreCase) ||
+                                    deviceName.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
+                                    deviceName.Equals("AUX", StringComparison.OrdinalIgnoreCase) ||
+                                    deviceName.Equals("NUL", StringComparison.OrdinalIgnoreCase) ||
+                                    (deviceName.Length == 4 &&
+                                     (deviceName.StartsWith("COM", StringComparison.OrdinalIgnoreCase) ||
+                                      deviceName.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) &&
+                                     deviceName[3] is >= '1' and <= '9');
+        if (isReservedDeviceName)
+            sanitized = $"_{sanitized}";
+
+        if (sanitized.Length > maxLength)
+            sanitized = sanitized[..maxLength].TrimEnd(' ', '.');
+
+        return string.IsNullOrWhiteSpace(sanitized) ? fallback : sanitized;
+    }
+
+    private static bool IsCloudPath(string path)
+        => path.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+           path.StartsWith("http://", StringComparison.OrdinalIgnoreCase);
+
+    private static ExportFormatInfo ResolveSingleFileFormat(string exportFormat)
+        => exportFormat.ToLowerInvariant() switch
+        {
+            "onepkg" => new(".onepkg", PublishFormat.pfOneNotePackage),
+            "xps"    => new(".xps", PublishFormat.pfXPS),
+            "pdf"    => new(".pdf", PublishFormat.pfPDF),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(exportFormat), exportFormat, "Unsupported single-file export format.")
+        };
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
@@ -448,6 +830,321 @@ internal sealed class OneNoteService : IDisposable
         };
     }
 
+    internal static async Task<ExportResult> WaitForHtmlPageAsync(
+        HtmlPageExport page,
+        bool isCloud,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        const int checkIntervalMs = 500;
+        const int requiredStableSnapshots = 10; // five seconds without bundle changes
+        int maxAttempts = isCloud ? 1200 : 600; // 10 min : 5 min per page
+        string? previousSnapshot = null;
+        int stableCount = 0;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                if (File.Exists(page.TargetPath) && new FileInfo(page.TargetPath).Length > 0)
+                {
+                    string pageDirectory = Path.GetDirectoryName(page.TargetPath)!;
+                    string snapshot = CreateDirectorySnapshot(pageDirectory);
+
+                    if (snapshot == previousSnapshot)
+                    {
+                        stableCount++;
+                        if (stableCount >= requiredStableSnapshots)
+                        {
+                            long totalBytes = Directory
+                                .EnumerateFiles(pageDirectory, "*", SearchOption.AllDirectories)
+                                .Sum(path => new FileInfo(path).Length);
+                            return new ExportResult
+                            {
+                                Success = true,
+                                Message = $"HTML page exported ({FormatBytes(totalBytes)})",
+                                ExportedPath = page.TargetPath
+                            };
+                        }
+                    }
+                    else
+                    {
+                        stableCount = 0;
+                        previousSnapshot = snapshot;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                // OneNote may be creating, replacing, or closing a companion asset.
+                stableCount = 0;
+                previousSnapshot = null;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Treat a temporary sharing/permission race as an active write.
+                stableCount = 0;
+                previousSnapshot = null;
+            }
+
+            if (attempt > 0 && attempt % 10 == 0)
+                progress?.Report($"Waiting for HTML assets: {page.Name}...");
+
+            await Task.Delay(checkIntervalMs, ct).ConfigureAwait(false);
+        }
+
+        return new ExportResult
+        {
+            Success = false,
+            Message = $"The HTML page '{page.Name}' did not finish writing."
+        };
+    }
+
+    private static string CreateDirectorySnapshot(string directory)
+    {
+        var snapshot = new StringBuilder();
+
+        foreach (string path in Directory
+                     .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            var info = new FileInfo(path);
+            snapshot
+                .Append(Path.GetRelativePath(directory, path))
+                .Append('|')
+                .Append(info.Length)
+                .Append('|')
+                .Append(info.LastWriteTimeUtc.Ticks)
+                .AppendLine();
+        }
+
+        return snapshot.ToString();
+    }
+
+    internal static ExportResult FinalizeHtmlExport(
+        HtmlExportPlan plan,
+        ExportResult result)
+    {
+        WriteHtmlIndexes(plan);
+
+        string parentDirectory = Path.GetDirectoryName(plan.FinalDirectory)
+            ?? throw new InvalidOperationException("The HTML destination path is invalid.");
+        string finalName = Path.GetFileName(plan.FinalDirectory);
+        string previousDirectory = Path.Combine(
+            parentDirectory, $".{finalName}.{Guid.NewGuid():N}.previous");
+        bool previousMoved = false;
+        bool updateCollectionIndex = !Path.GetFullPath(plan.CollectionDirectory).Equals(
+            Path.GetFullPath(plan.FinalDirectory), StringComparison.OrdinalIgnoreCase);
+        string collectionIndexPath = Path.Combine(
+            plan.CollectionDirectory, "index.html");
+        byte[]? previousCollectionIndex = updateCollectionIndex && File.Exists(collectionIndexPath)
+            ? File.ReadAllBytes(collectionIndexPath)
+            : null;
+
+        try
+        {
+            if (Directory.Exists(plan.FinalDirectory))
+            {
+                Directory.Move(plan.FinalDirectory, previousDirectory);
+                previousMoved = true;
+            }
+
+            Directory.Move(plan.StagingDirectory, plan.FinalDirectory);
+
+            if (updateCollectionIndex)
+                WriteHtmlCollectionIndex(plan.CollectionDirectory, plan.CollectionTitle);
+
+            result.ExportedPath = updateCollectionIndex
+                ? collectionIndexPath
+                : Path.Combine(plan.FinalDirectory, "index.html");
+
+            if (previousMoved)
+                TryDeleteDirectory(previousDirectory);
+
+            return result;
+        }
+        catch
+        {
+            try
+            {
+                if (Directory.Exists(plan.FinalDirectory) &&
+                    !Directory.Exists(plan.StagingDirectory))
+                {
+                    Directory.Move(plan.FinalDirectory, plan.StagingDirectory);
+                }
+
+                if (!Directory.Exists(plan.FinalDirectory) &&
+                    previousMoved &&
+                    Directory.Exists(previousDirectory))
+                {
+                    Directory.Move(previousDirectory, plan.FinalDirectory);
+                }
+
+                if (updateCollectionIndex)
+                {
+                    if (previousCollectionIndex != null)
+                        File.WriteAllBytes(collectionIndexPath, previousCollectionIndex);
+                    else if (File.Exists(collectionIndexPath))
+                        File.Delete(collectionIndexPath);
+                }
+            }
+            catch (IOException)
+            {
+                // Preserve the original finalization failure. The .previous directory
+                // remains available for recovery on the next export.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Preserve the original finalization failure and retained recovery data.
+            }
+
+            throw;
+        }
+    }
+
+    private static void WriteHtmlIndexes(HtmlExportPlan plan)
+    {
+        var sectionGroups = plan.Pages
+            .GroupBy(page => Path.GetDirectoryName(page.RelativeDirectory) ?? "")
+            .OrderBy(group => group.First().SectionPath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var sectionGroup in sectionGroups)
+        {
+            string sectionDirectory = Path.Combine(
+                plan.StagingDirectory, sectionGroup.Key);
+            var sectionLinks = sectionGroup
+                .OrderBy(page => page.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(page => (
+                    page.Name,
+                    ToHtmlHref(Path.GetRelativePath(
+                        sectionDirectory, page.TargetPath))))
+                .ToList();
+            WriteHtmlIndex(
+                Path.Combine(sectionDirectory, "index.html"),
+                sectionGroup.First().SectionPath,
+                sectionLinks);
+        }
+
+        var rootLinks = plan.Pages
+            .OrderBy(page => page.SectionPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(page => page.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(page => (
+                $"{page.SectionPath} / {page.Name}",
+                ToHtmlHref(Path.GetRelativePath(
+                    plan.StagingDirectory, page.TargetPath))))
+            .ToList();
+        WriteHtmlIndex(
+            Path.Combine(plan.StagingDirectory, "index.html"),
+            plan.Title,
+            rootLinks);
+    }
+
+    private static void WriteHtmlCollectionIndex(
+        string collectionDirectory,
+        string title)
+    {
+        Directory.CreateDirectory(collectionDirectory);
+        string rootIndexPath = Path.Combine(collectionDirectory, "index.html");
+        var sectionLinks = Directory
+            .EnumerateFiles(collectionDirectory, "index.html", SearchOption.AllDirectories)
+            .Where(path => !path.Equals(rootIndexPath, StringComparison.OrdinalIgnoreCase))
+            .Select(path => new
+            {
+                Path = path,
+                RelativePath = Path.GetRelativePath(collectionDirectory, path)
+            })
+            .Where(item => !item.RelativePath
+                .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)
+                .Any(segment => segment.StartsWith('.')))
+            .Where(item => HasStableSuffix(
+                Path.GetFileName(Path.GetDirectoryName(item.RelativePath) ?? "")))
+            .OrderBy(item => item.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .Select(item => (
+                GetHtmlCollectionLabel(item.RelativePath),
+                ToHtmlHref(item.RelativePath)))
+            .ToList();
+
+        string temporaryIndexPath = Path.Combine(
+            collectionDirectory, $".index.{Guid.NewGuid():N}.partial.html");
+        try
+        {
+            WriteHtmlIndex(temporaryIndexPath, title, sectionLinks);
+            File.Move(temporaryIndexPath, rootIndexPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryIndexPath))
+                File.Delete(temporaryIndexPath);
+        }
+    }
+
+    private static string GetHtmlCollectionLabel(string relativeIndexPath)
+    {
+        string? directory = Path.GetDirectoryName(relativeIndexPath);
+        if (string.IsNullOrEmpty(directory)) return "Section";
+
+        return string.Join(
+            " / ",
+            directory
+                .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)
+                .Select(RemoveStableSuffix));
+    }
+
+    private static string RemoveStableSuffix(string segment)
+    {
+        int separatorIndex = segment.LastIndexOf("__", StringComparison.Ordinal);
+        return HasStableSuffix(segment)
+            ? segment[..separatorIndex]
+            : segment;
+    }
+
+    private static bool HasStableSuffix(string segment)
+    {
+        int separatorIndex = segment.LastIndexOf("__", StringComparison.Ordinal);
+        if (separatorIndex < 0 || segment.Length - separatorIndex != 10)
+            return false;
+
+        return segment[(separatorIndex + 2)..].All(Uri.IsHexDigit);
+    }
+
+    private static void WriteHtmlIndex(
+        string path,
+        string title,
+        IReadOnlyList<(string Label, string Href)> links)
+    {
+        var html = new StringBuilder()
+            .AppendLine("<!doctype html>")
+            .AppendLine("<html lang=\"en\"><head><meta charset=\"utf-8\">")
+            .Append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+            .Append("<title>").Append(WebUtility.HtmlEncode(title)).AppendLine("</title>")
+            .AppendLine("<style>body{font:16px/1.5 system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#202124}h1{color:#0078d7}li{margin:.55rem 0}a{color:#0067b8}</style>")
+            .AppendLine("</head><body>")
+            .Append("<h1>").Append(WebUtility.HtmlEncode(title)).AppendLine("</h1>")
+            .AppendLine("<ul>");
+
+        foreach (var (label, href) in links)
+        {
+            html.Append("<li><a href=\"")
+                .Append(WebUtility.HtmlEncode(href))
+                .Append("\">")
+                .Append(WebUtility.HtmlEncode(label))
+                .AppendLine("</a></li>");
+        }
+
+        html.AppendLine("</ul></body></html>");
+        File.WriteAllText(path, html.ToString(), new UTF8Encoding(false));
+    }
+
+    private static string ToHtmlHref(string relativePath)
+        => string.Join(
+            "/",
+            relativePath
+                .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)
+                .Select(Uri.EscapeDataString));
+
     internal static ExportResult FinalizeExport(
         PendingExport pending,
         ExportResult result)
@@ -460,6 +1157,7 @@ internal sealed class OneNoteService : IDisposable
     internal static bool IsRecoverableComFailure(Exception exception)
         => exception is COMException ex && ex.HResult is
             unchecked((int)0x800706BA) or // RPC_S_SERVER_UNAVAILABLE
+            unchecked((int)0x800706BE) or // RPC_S_CALL_FAILED
             unchecked((int)0x80010108) or // RPC_E_DISCONNECTED
             unchecked((int)0x800401FD) or // CO_E_OBJNOTCONNECTED
             unchecked((int)0x8001010A) or // RPC_E_SERVERCALL_RETRYLATER
@@ -468,6 +1166,7 @@ internal sealed class OneNoteService : IDisposable
     internal static bool RequiresComConnectionReset(Exception exception)
         => exception is COMException ex && ex.HResult is
             unchecked((int)0x800706BA) or
+            unchecked((int)0x800706BE) or
             unchecked((int)0x80010108) or
             unchecked((int)0x800401FD);
 
@@ -481,6 +1180,7 @@ internal sealed class OneNoteService : IDisposable
         return ex.HResult switch
         {
             unchecked((int)0x800706BA) => "RPC connection lost (0x800706BA)",
+            unchecked((int)0x800706BE) => "OneNote RPC call failed (0x800706BE)",
             unchecked((int)0x80010108) => "COM object disconnected (0x80010108)",
             unchecked((int)0x800401FD) => "COM object is no longer connected (0x800401FD)",
             unchecked((int)0x80010007) => "OneNote COM server stopped (0x80010007)",
@@ -605,7 +1305,7 @@ internal sealed class OneNoteService : IDisposable
     private static void CollectSections(
         XElement parent, XNamespace ns,
         string notebookId, string notebookName, string notebookPath, bool isCloud,
-        string groupName, List<SectionInfo> sections)
+        string groupName, string groupExportPath, List<SectionInfo> sections)
     {
         foreach (var el in parent.Elements())
         {
@@ -621,6 +1321,7 @@ internal sealed class OneNoteService : IDisposable
                     NotebookName = notebookName,
                     NotebookPath = notebookPath,
                     GroupName    = groupName,
+                    GroupExportPath = groupExportPath,
                     IsCloud      = isCloud
                 });
             }
@@ -629,8 +1330,13 @@ internal sealed class OneNoteService : IDisposable
                 if (el.Attribute("isRecycleBin")?.Value == "true") continue;
 
                 var gName = el.Attribute("name")?.Value ?? "Group";
+                string gId = el.Attribute("ID")?.Value ?? $"{groupName}/{gName}";
+                string exportSegment =
+                    $"{SanitizeHtmlPathSegment(gName, "Group")}" +
+                    $"__{CreateStableSuffix(gId)}";
                 CollectSections(el, ns, notebookId, notebookName, notebookPath, isCloud,
                     string.IsNullOrEmpty(groupName) ? gName : $"{groupName} / {gName}",
+                    Path.Combine(groupExportPath, exportSegment),
                     sections);
             }
         }

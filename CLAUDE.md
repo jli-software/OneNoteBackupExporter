@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-OneNote Backup Exporter (C# WPF Edition) – a pure C# WPF desktop application for exporting OneNote notebooks via the COM API to multiple formats (.onepkg, .xps, .pdf). This is a migration of the original Go/Wails project; the JSON-RPC subprocess layer has been eliminated – the WPF app calls `OneNoteService` directly in-process.
+OneNote Backup Exporter (C# WPF Edition) – a pure C# WPF desktop application for exporting OneNote notebooks via the COM API to multiple formats (.onepkg, HTML, .xps, .pdf). This is a migration of the original Go/Wails project; the JSON-RPC subprocess layer has been eliminated – the WPF app calls `OneNoteService` directly in-process.
 
 ## Architecture
 
@@ -94,6 +94,10 @@ in the project, installer metadata, Git tag, GitHub release title, and About dia
    jobs therefore show a preflight choice: automatically split into individual
    section exports (recommended), switch to `.onepkg`, or explicitly try the whole
    rendered export anyway
+9. HTML is exported page by page with `pfHTML`. The app builds a browsable index and
+   stages the complete directory tree before replacing the previous
+   `<Notebook>__<stable-id>_html` folder, because OneNote emits `.htm` pages plus
+   companion asset folders.
 
 ### Export Formats
 | UI value | PublishFormat | Extension |
@@ -101,6 +105,7 @@ in the project, installer metadata, Git tag, GitHub release title, and About dia
 | `"onepkg"` | `pfOneNotePackage` | `.onepkg` |
 | `"xps"` | `pfXPS` | `.xps` |
 | `"pdf"` | `pfPDF` | `.pdf` |
+| `"html"` | `pfHTML` page jobs | `<Notebook>__<stable-id>_html/index.html` |
 | `"localbackup"` | n/a (file copy) | n/a |
 
 ### Local Backup Mode

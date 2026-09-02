@@ -5,6 +5,8 @@ VisualStudioVersion = 17.8.34316.72
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OneNoteExporter", "OneNoteExporter.csproj", "{3F2504E0-4F89-41D3-9A0C-0305E82C3301}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OneNoteExporter.Tests", "tests\OneNoteExporter.Tests\OneNoteExporter.Tests.csproj", "{C149C964-3A10-4B2C-B41F-A0A53D77D6FD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x86 = Debug|x86
@@ -15,6 +17,10 @@ Global
 		{3F2504E0-4F89-41D3-9A0C-0305E82C3301}.Debug|x86.Build.0 = Debug|x86
 		{3F2504E0-4F89-41D3-9A0C-0305E82C3301}.Release|x86.ActiveCfg = Release|x86
 		{3F2504E0-4F89-41D3-9A0C-0305E82C3301}.Release|x86.Build.0 = Release|x86
+		{C149C964-3A10-4B2C-B41F-A0A53D77D6FD}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C149C964-3A10-4B2C-B41F-A0A53D77D6FD}.Debug|x86.Build.0 = Debug|Any CPU
+		{C149C964-3A10-4B2C-B41F-A0A53D77D6FD}.Release|x86.ActiveCfg = Release|Any CPU
+		{C149C964-3A10-4B2C-B41F-A0A53D77D6FD}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
