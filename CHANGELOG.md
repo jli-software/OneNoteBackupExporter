@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0
+
+- Added page-by-page HTML export for complete notebooks and selected sections.
+- Added generated browser indexes while preserving notebook section-group structure.
+- Protected previous HTML exports with staged directory swaps and automatic recovery.
+- Added collision-safe notebook, section, and page folders plus bounded OneNote COM recovery.
+
 ## 1.2.2
 
 - Simplified the large PDF/XPS export choice to one short explanation and three clear actions.

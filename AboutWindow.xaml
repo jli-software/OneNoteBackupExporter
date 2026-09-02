@@ -65,7 +65,7 @@
             </Border>
 
             <StackPanel Grid.Row="2">
-                <TextBlock Text="Supports OneNote packages, PDF, XPS and local backup copies."
+                <TextBlock Text="Supports OneNote packages, HTML, PDF, XPS and local backup copies."
                            TextWrapping="Wrap"
                            TextAlignment="Center"
                            Foreground="{StaticResource TextSecondary}"

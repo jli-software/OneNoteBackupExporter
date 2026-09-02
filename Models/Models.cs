@@ -21,6 +21,7 @@ public class SectionInfo
     public string NotebookName { get; set; } = "";
     public string NotebookPath { get; set; } = "";
     public string GroupName      { get; set; } = ""; // empty when section is directly in notebook
+    public string GroupExportPath { get; set; } = ""; // collision-safe HTML group path
     public string ExportFileStem { get; set; } = ""; // collision-safe; UI continues to show Name
     public bool   IsCloud        { get; set; }
 }

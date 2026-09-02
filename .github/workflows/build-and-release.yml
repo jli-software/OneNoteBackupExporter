@@ -58,7 +58,10 @@ jobs:
           "number=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Building version $version"
 
-      - name: Restore dependencies
+      - name: Run tests
+        run: dotnet test tests\OneNoteExporter.Tests\OneNoteExporter.Tests.csproj --configuration Release
+
+      - name: Restore win-x64 dependencies
         run: dotnet restore OneNoteExporter.csproj --runtime win-x64
 
       - name: Publish self-contained application

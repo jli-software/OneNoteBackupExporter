@@ -70,14 +70,22 @@ public sealed class OneNoteComWorker : IDisposable
         string exportFormat = "onepkg",
         IProgress<string>? progress = null,
         CancellationToken ct = default)
-        => RunSerializedAsync(
-            () => ExportAsync(
-                service => service.BeginNotebookExport(
-                    notebookId, destinationPath, exportFormat, progress),
-                exportFormat,
-                progress,
-                ct),
-            ct);
+        => exportFormat.Equals("html", StringComparison.OrdinalIgnoreCase)
+            ? RunSerializedAsync(
+                () => ExportHtmlAsync(
+                    service => service.BeginNotebookHtmlExport(
+                        notebookId, destinationPath, progress),
+                    progress,
+                    ct),
+                ct)
+            : RunSerializedAsync(
+                () => ExportAsync(
+                    service => service.BeginNotebookExport(
+                        notebookId, destinationPath, exportFormat, progress),
+                    exportFormat,
+                    progress,
+                    ct),
+                ct);
 
     public Task<ExportResult> ExportSectionAsync(
         SectionInfo section,
@@ -85,14 +93,126 @@ public sealed class OneNoteComWorker : IDisposable
         string exportFormat = "onepkg",
         IProgress<string>? progress = null,
         CancellationToken ct = default)
-        => RunSerializedAsync(
-            () => ExportAsync(
-                service => service.BeginSectionExport(
-                    section, destinationPath, exportFormat, progress),
-                exportFormat,
-                progress,
-                ct),
-            ct);
+        => exportFormat.Equals("html", StringComparison.OrdinalIgnoreCase)
+            ? RunSerializedAsync(
+                () => ExportHtmlAsync(
+                    service => service.BeginSectionHtmlExport(
+                        section, destinationPath, progress),
+                    progress,
+                    ct),
+                ct)
+            : RunSerializedAsync(
+                () => ExportAsync(
+                    service => service.BeginSectionExport(
+                        section, destinationPath, exportFormat, progress),
+                    exportFormat,
+                    progress,
+                    ct),
+                ct);
+
+    private async Task<ExportResult> ExportHtmlAsync(
+        Func<OneNoteService, HtmlExportPlan> beginExport,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        bool connectionRecoveryAttempted = false;
+
+        for (int attempt = 1; attempt <= MaxExportAttempts; attempt++)
+        {
+            try
+            {
+                HtmlExportPlan plan = await InvokeAsync(beginExport, ct).ConfigureAwait(false);
+
+                for (int pageIndex = 0; pageIndex < plan.Pages.Count; pageIndex++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    HtmlPageExport page = plan.Pages[pageIndex];
+                    progress?.Report(
+                        $"HTML page {pageIndex + 1}/{plan.Pages.Count}: {page.Name}");
+
+                    await InvokeAsync(
+                            service => service.BeginHtmlPageExport(plan, page, progress),
+                            ct)
+                        .ConfigureAwait(false);
+                    ExportResult pageResult = await OneNoteService.WaitForHtmlPageAsync(
+                            page, plan.IsCloud, progress, ct)
+                        .ConfigureAwait(false);
+
+                    if (!pageResult.Success)
+                    {
+                        pageResult.Message +=
+                            " The existing HTML export was not changed. A temporary " +
+                            "staging directory may be retained until automatic cleanup.";
+                        return pageResult;
+                    }
+                }
+
+                progress?.Report("Building the HTML index and finalizing the export...");
+                ct.ThrowIfCancellationRequested();
+                var result = new ExportResult
+                {
+                    Success = true,
+                    Message = $"Exported {plan.Pages.Count} HTML page(s) successfully."
+                };
+                ExportResult finalResult = OneNoteService.FinalizeHtmlExport(plan, result);
+                finalResult.AttemptCount = attempt;
+                finalResult.RecoveredAfterRetry = attempt > 1;
+
+                if (finalResult.RecoveredAfterRetry)
+                {
+                    finalResult.Message +=
+                        $" Export succeeded after OneNote communication recovery " +
+                        $"(attempt {attempt}/{MaxExportAttempts}).";
+                }
+
+                return finalResult;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (
+                attempt < MaxExportAttempts &&
+                OneNoteService.IsRecoverableComFailure(ex))
+            {
+                string failure = OneNoteService.DescribeComFailure(ex);
+                bool resetConnection = OneNoteService.RequiresComConnectionReset(ex);
+
+                progress?.Report(
+                    $"OneNote communication failed: {failure}. " +
+                    $"Automatic retry {attempt + 1}/{MaxExportAttempts} in " +
+                    $"{ExportRetryDelay.TotalSeconds:0} seconds...");
+                await Task.Delay(ExportRetryDelay, ct).ConfigureAwait(false);
+
+                if (resetConnection)
+                {
+                    progress?.Report("Reconnecting to OneNote Desktop...");
+
+                    try
+                    {
+                        await RecreateServiceAsync(ct).ConfigureAwait(false);
+                        connectionRecoveryAttempted = true;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception recoveryException)
+                    {
+                        return OneNoteService.CreateConnectionRecoveryFailure(
+                            ex, recoveryException);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return OneNoteService.CreateExportFailure(
+                    ex, attempt, "html", connectionRecoveryAttempted);
+            }
+        }
+
+        throw new InvalidOperationException("The HTML export retry loop ended unexpectedly.");
+    }
 
     private async Task<ExportResult> ExportAsync(
         Func<OneNoteService, PendingExport> beginExport,
