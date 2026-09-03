@@ -15,6 +15,10 @@ Microsoft's COM API.
 
 </div>
 
+<p align="center">
+  <img src="docs/images/main-window.png" alt="OneNote Backup Exporter main window with notebook and section selection" width="900" />
+</p>
+
 ## Download
 
 [Download the latest Windows x64 installer](https://github.com/jli-software/OneNoteBackupExporter/releases/latest/download/OneNoteBackupExporter_Setup.exe)
@@ -99,6 +103,10 @@ choices:
 1. export every unlocked section separately (recommended);
 2. create a complete `.onepkg` backup instead; or
 3. attempt the whole-notebook rendered export.
+
+<p align="center">
+  <img src="docs/images/pdf-export-options.png" alt="PDF export options for large OneNote notebooks" width="640" />
+</p>
 
 Section-by-section output preserves section groups as folders and uses collision-safe names.
 
